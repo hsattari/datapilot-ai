@@ -1,0 +1,11 @@
+version: 2
+models:
+  - name: fact_sales
+    description: One row per order; the governed base model for sales metrics.
+    columns:
+      - name: order_id
+        tests: [not_null, unique]
+      - name: order_date
+        tests: [not_null]
+      - name: net_sales
+        tests: [not_null]

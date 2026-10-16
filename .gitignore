@@ -1,0 +1,14 @@
+.env
+.data/
+__pycache__/
+*.pyc
+.pytest_cache/
+node_modules/
+.next/
+next-env.d.ts
+*.tsbuildinfo
+.terraform/
+*.tfstate*
+terraform.tfvars
+profiles.yml
+target/

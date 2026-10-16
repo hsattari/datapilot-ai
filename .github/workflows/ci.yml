@@ -1,0 +1,21 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r apps/api/requirements.txt
+      - name: Tests (unit, security, data quality, AI gold questions)
+        run: cd apps/api && python -m pytest -q
+      - name: Migrations apply cleanly
+        run: cd apps/api && DATABASE_URL=sqlite:///./ci.db alembic upgrade head
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: cd apps/web && npm ci && npm run typecheck && npm run build

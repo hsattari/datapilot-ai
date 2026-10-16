@@ -1,0 +1,10 @@
+version: 2
+sources:
+  - name: raw_sales
+    description: Bronze tables loaded by the DataPilot ingestion worker
+    tables:
+      - name: orders
+        columns:
+          - name: order_id
+          - name: order_date
+          - name: net_sales

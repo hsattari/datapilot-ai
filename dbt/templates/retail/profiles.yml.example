@@ -1,0 +1,6 @@
+datapilot:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: ../../../.data/analytics/<tenant_id>.duckdb

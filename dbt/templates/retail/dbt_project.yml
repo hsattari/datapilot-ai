@@ -1,0 +1,12 @@
+name: retail_analytics
+version: "0.1.0"
+config-version: 2
+profile: datapilot
+model-paths: ["models"]
+test-paths: ["tests"]
+models:
+  retail_analytics:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table

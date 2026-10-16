@@ -1,0 +1,25 @@
+services:
+  postgres:
+    image: postgres:16
+    environment: { POSTGRES_USER: datapilot, POSTGRES_PASSWORD: datapilot, POSTGRES_DB: datapilot }
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U datapilot"], interval: 5s, retries: 10 }
+  api:
+    build: { context: ., dockerfile: infrastructure/docker/api.Dockerfile }
+    env_file: .env
+    depends_on: { postgres: { condition: service_healthy } }
+    volumes: [appdata:/data]
+    ports: ["8000:8000"]
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+  worker:
+    build: { context: ., dockerfile: infrastructure/docker/api.Dockerfile }
+    env_file: .env
+    depends_on: [api]
+    volumes: [appdata:/data]
+    command: python -m app.worker
+  web:
+    build: { context: ., dockerfile: infrastructure/docker/web.Dockerfile }
+    environment: { API_URL: "http://api:8000" }
+    depends_on: [api]
+    ports: ["3000:3000"]
+volumes: { pgdata: {}, appdata: {} }

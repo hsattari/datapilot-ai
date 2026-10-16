@@ -1,0 +1,4 @@
+order_id,order_date,product,region,customer,net_sales,cost
+A,2026-01-10,Widget,North,C1,100,60
+B,2026-01-20,Gadget,South,C2,200,130
+C,2026-02-05,Widget,North,C1,50,20
