@@ -9,6 +9,7 @@ from . import models as m
 from .config import get_settings
 from .db import Base, engine, get_db
 from .deps import Principal, get_principal, require_admin, require_writer
+from .routers.knowledge import router as knowledge_router
 from .schemas import ApproveIn, LoginIn, QuestionIn, RegisterIn, SourceIn
 from .security import create_token, hash_password, verify_password
 from .services import analytics_store as store
@@ -19,6 +20,7 @@ from .services.storage import get_storage, safe_filename
 from .services.validation import UploadRejected, validate_upload
 
 app = FastAPI(title="DataPilot AI API", version="0.1.0")
+app.include_router(knowledge_router)
 
 
 def audit(db: Session, p: Principal | None, action: str, **detail) -> None:

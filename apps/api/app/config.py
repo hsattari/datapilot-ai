@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     azure_openai_api_key: str = ""
     azure_openai_deployment: str = ""
     azure_openai_embedding_deployment: str = ""
+    embedding_dimensions: int = 1536  # text-embedding-3-large supports shortened vectors; fits pgvector indexes
     azure_openai_api_version: str = "2024-10-21"
 
 

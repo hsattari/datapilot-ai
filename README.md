@@ -14,12 +14,13 @@ proposal (v1.0, 10 Oct 2026).
 | PostgreSQL metadata schema + Alembic migration | **Complete** (migration verified on SQLite; run it against PostgreSQL before relying on it) |
 | Metric registry (approval gate, required-input check) | **Complete**, tested |
 | Plan → controlled SQL → validator → read-only execution, provenance, caveats | **Complete**, tested |
-| Azure OpenAI planner | **Coded, untested** (needs endpoint/key); deterministic rule-based planner is the default fallback |
-| Gold-question + security regression suite | **Complete** (35 tests) |
+| Azure OpenAI planner + embeddings | **Verified by you** against your Azure resource (`scripts/test_azure_openai.py`: chat `gpt-4.1-mini` OK, embeddings `text-embedding-3-large` OK); the planner's JSON-plan call path itself has not been exercised end to end. Deterministic rule-based planner is the fallback |
+| RAG knowledge base (`/api/v1/knowledge/*`): chunking, Azure embeddings (1536-dim), keyword + vector hybrid retrieval, cited answers, tenant isolation | **Complete and tested on SQLite** (portable cosine search). The **PostgreSQL + pgvector path (migration 0002, HNSW index, `<=>` query) is written but UNTESTED** — pgvector was not available in the build sandbox; run it against a real server before relying on it |
+| Gold-question + security regression suite | **Complete** (44 tests) |
 | Next.js UI (register/login, upload, profile, mapping approval, dashboard, Ask Your Data) | **Builds and typechecks**; not browser-tested |
 | dbt Core retail template | **Written; `dbt build` not run** (SQL logic checked on DuckDB against the reference data) |
 | Docker Compose, Terraform, CI workflow | **Written, not executed** (no Docker daemon / Terraform in the build sandbox) |
-| Databricks/PySpark/Delta/Unity Catalog, Fabric/OneLake/Power BI, RAG (AI Search/pgvector), MCP, Dataflow Gen2 | **Not implemented** — see `connectors/*/README.md`. They need external credentials/licences and are roadmap phases 5–7. |
+| Databricks/PySpark/Delta/Unity Catalog, Fabric/OneLake/Power BI, Azure AI Search backend, MCP, Dataflow Gen2 | **Not implemented** — see `connectors/*/README.md`. They need external credentials/licences and are roadmap phases 5–7. |
 
 The Starter profile uses DuckDB (one database file per tenant) as the analytical engine. Verify all
 Azure/dbt/Databricks/Fabric versions and APIs against current official documentation before production.
@@ -40,6 +41,18 @@ With Docker: `cp .env.example .env && docker compose up --build`.
 1. Generate/see data: `data/synthetic/` (`orders_reference.csv` has the brief's A/B/C orders, `orders_retail.csv` has 800 orders).
 2. Register, upload `orders_reference.csv`, approve the proposed mapping.
 3. Approve the `gross_profit` metric (admin) and ask "What is our gross profit?" → **140**.
+
+## Knowledge base (RAG)
+
+    POST /api/v1/knowledge/documents          {"title","text"}        (admin/analyst)
+    POST /api/v1/knowledge/documents/upload   .txt/.md file           (admin/analyst)
+    POST /api/v1/knowledge/search             {"query","k"}           (any member)
+    POST /api/v1/knowledge/ask                {"query"}  -> cited answer or excerpts
+
+Documents are untrusted text: they are never executed as instructions, SQL or metrics, and numbers must still
+come from the governed metric path. Without Azure configured, a lexical hashing fallback is used (not semantic;
+recorded per document as `embedding_mode`). `EMBEDDING_DIMENSIONS` defaults to 1536 (shortened
+`text-embedding-3-large` vectors, compatible with pgvector indexes); changing it requires re-indexing and a new migration.
 
 ## Tests
 
