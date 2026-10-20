@@ -11,15 +11,16 @@ proposal (v1.0, 10 Oct 2026).
 | Auth (JWT), tenant isolation (server-side tenant resolution), roles | **Complete**, tested |
 | Upload API (CSV/XLSX/TXT/JSON/JSONL), validation, immutable raw storage (local; ADLS Gen2 backend coded) | **Complete** locally; ADLS backend **untested** (needs Azure credentials) |
 | Async ingestion worker, retries/backoff, profiling, mapping suggestions, quarantine + count reconciliation | **Complete**, tested |
-| PostgreSQL metadata schema + Alembic migration | **Complete** (migration verified on SQLite; run it against PostgreSQL before relying on it) |
+| PostgreSQL metadata schema + Alembic migrations (0001, 0002 incl. pgvector column + HNSW index) | **Verified on real PostgreSQL 16 + pgvector 0.6** (apply, downgrade, re-apply; full suite passes on it; also runs in CI) |
 | Metric registry (approval gate, required-input check) | **Complete**, tested |
 | Plan → controlled SQL → validator → read-only execution, provenance, caveats | **Complete**, tested |
 | Azure OpenAI planner + embeddings | **Verified by you** against your Azure resource (`scripts/test_azure_openai.py`: chat `gpt-4.1-mini` OK, embeddings `text-embedding-3-large` OK); the planner's JSON-plan call path itself has not been exercised end to end. Deterministic rule-based planner is the fallback |
-| RAG knowledge base (`/api/v1/knowledge/*`): chunking, Azure embeddings (1536-dim), keyword + vector hybrid retrieval, cited answers, tenant isolation | **Complete and tested on SQLite** (portable cosine search). The **PostgreSQL + pgvector path (migration 0002, HNSW index, `<=>` query) is written but UNTESTED** — pgvector was not available in the build sandbox; run it against a real server before relying on it |
-| Gold-question + security regression suite | **Complete** (63 tests) |
-| Next.js UI (register/login, upload, profile, mapping approval, dashboard, Ask Your Data) | **Builds and typechecks**; not browser-tested |
-| dbt Core retail template | **Written; `dbt build` not run** (SQL logic checked on DuckDB against the reference data) |
-| Docker Compose, Terraform, CI workflow | **Written, not executed** (no Docker daemon / Terraform in the build sandbox) |
+| RAG knowledge base (`/api/v1/knowledge/*`): chunking, Azure embeddings (1536-dim), keyword + vector hybrid retrieval, cited answers, tenant isolation | **Complete and tested on SQLite and on PostgreSQL + pgvector** (SQL `<=>` path, HNSW index, tenant-scoped ranking). Tested with the local hashing embeddings, not real Azure embeddings; the Azure-backed `/ask` answer was not exercised end to end |
+| Gold-question + security regression suite | **Complete** (66 tests on PostgreSQL; 63 + 3 PG-only skipped on SQLite) |
+| Next.js UI (register/login, upload, profile, mapping approval, dashboard, Ask Your Data) | **Browser-tested end to end** (Chromium/Playwright: `scripts/e2e_ui_test.py`; dashboard 350/140, ask 140, unsafe question refused). Functional but visually plain; no UI yet for metric approval |
+| dbt Core retail template | **`dbt build` verified** (dbt 1.12 + DuckDB: 8/8 pass, gross profit 140, bad row quarantined, duplicate fails the unique test) via `dbt/check_template.py`, also in CI. Other warehouses (Databricks/Fabric) not tested |
+| CI workflow | **Running on GitHub, all 4 jobs green** (api, web, PostgreSQL+pgvector, dbt) |
+| Docker Compose, Terraform | **Written, not executed** (no Docker daemon / Terraform in the build sandbox) |
 | MCP server (`apps/mcp`): 6 read-only tools over the REST API (tenant scoping/validation reused; no write, raw-SQL or tenant tools) | **Complete**; tested in-process and via a real stdio handshake. Not tested with a specific client app |
 | Analytics backend abstraction + **Databricks SQL / Unity Catalog adapter** (schema per tenant, read-only token for queries, named-parameter binding, PySpark ingest template) | **Written, mock-tested only — UNTESTED against a real workspace.** See `connectors/databricks/README.md` |
 | **Power BI semantic model export** (`GET /api/v1/export/powerbi`: TMSL + DAX from approved metrics, SQL-equivalent NULL handling) | **Generated, not executed in Power BI.** The partition is a template you bind to your source. See `docs/architecture/fabric-powerbi.md` |
