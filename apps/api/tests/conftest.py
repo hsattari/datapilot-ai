@@ -3,8 +3,11 @@ import tempfile
 from pathlib import Path
 
 _tmp = tempfile.mkdtemp(prefix="dp-test-")
+# Set TEST_DATABASE_URL=postgresql+psycopg2://... to run the whole suite on a real PostgreSQL (+pgvector);
+# the schema is then built from the Alembic migrations so migration-only objects (pgvector) are exercised.
+_PG = os.environ.get("TEST_DATABASE_URL", "")
 os.environ.update(
-    DATABASE_URL="sqlite:///:memory:",
+    DATABASE_URL=_PG or "sqlite:///:memory:",
     LOCAL_STORAGE_PATH=f"{_tmp}/raw",
     ANALYTICS_PATH=f"{_tmp}/analytics",
     JWT_SECRET="test-secret",
@@ -21,10 +24,25 @@ from app.services.ingestion import run_pending  # noqa: E402
 DATA = Path(__file__).resolve().parents[3] / "data" / "synthetic"
 
 
+def _reset_schema():
+    if _PG:
+        from alembic import command
+        from alembic.config import Config
+
+        with engine.begin() as conn:
+            conn.exec_driver_sql("DROP SCHEMA public CASCADE")
+            conn.exec_driver_sql("CREATE SCHEMA public")
+        cfg = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+        cfg.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "migrations"))
+        command.upgrade(cfg, "head")
+    else:
+        Base.metadata.drop_all(engine)
+        Base.metadata.create_all(engine)
+
+
 @pytest.fixture()
 def client():
-    Base.metadata.drop_all(engine)
-    Base.metadata.create_all(engine)
+    _reset_schema()
     return TestClient(app)
 
 
