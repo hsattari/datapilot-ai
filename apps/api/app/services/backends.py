@@ -97,7 +97,9 @@ class DatabricksBackend:
         token = (self.s.databricks_token if write else (self.s.databricks_readonly_token or self.s.databricks_token))
         return sql.connect(server_hostname=self.s.databricks_server_hostname, http_path=self.s.databricks_http_path,
                            access_token=token, catalog=self.s.databricks_catalog,
-                           schema=self.schema(tenant_id),
+                           # Writers connect to the catalog only (the tenant schema may not exist yet) and then
+                           # USE SCHEMA; readers are pinned to the tenant schema at connection time.
+                           **({} if write else {"schema": self.schema(tenant_id)}),
                            session_configuration={"STATEMENT_TIMEOUT": str(self.s.query_timeout_seconds)}
                            if not write else None)
 
@@ -127,6 +129,7 @@ class DatabricksBackend:
         batch = max(1, 200 // max(1, len(cols)))
         with self._connect(tenant_id, True) as conn, conn.cursor() as cur:
             self._exec(cur, f"CREATE SCHEMA IF NOT EXISTS {schema}")
+            self._exec(cur, f"USE SCHEMA {schema}")
             col_defs = ", ".join(f"`{c}` STRING" for c in cols)
             self._exec(cur, f"CREATE OR REPLACE TABLE {table} ({col_defs})")
             rows = df.astype(str).values.tolist()
@@ -157,6 +160,7 @@ class DatabricksBackend:
                             cast("cost_of_goods_sold", "DECIMAL(18,2)"), txt("product"), txt("region"),
                             txt("customer")])
         with self._connect(tenant_id, True) as conn, conn.cursor() as cur:
+            self._exec(cur, f"USE SCHEMA {self.schema(tenant_id)}")
             self._exec(cur, f"CREATE OR REPLACE TEMPORARY VIEW stg AS SELECT {select} FROM {bronze_table}")
             self._exec(cur, "CREATE OR REPLACE TABLE quarantine_sales AS SELECT * FROM stg "
                             "WHERE order_id IS NULL OR order_date IS NULL OR net_sales IS NULL")

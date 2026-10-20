@@ -97,9 +97,11 @@ def test_load_bronze_and_build_fact_sales_sql(dbx):
     b.load_bronze(TENANT, "bronze_x", df)
     assert conns[-1]["access_token"] == "WRITE"
     stmts = [s for s, _ in log]
-    assert stmts[0].startswith("CREATE SCHEMA IF NOT EXISTS t_") and "CREATE OR REPLACE TABLE bronze_x" in stmts[1]
-    assert all("INSERT INTO bronze_x VALUES" in s for s in stmts[2:])
-    assert all(isinstance(p, dict) and ":p0_0" in s and "'A'" not in s for s, p in log[2:])  # values only in bound params
+    assert "schema" not in conns[-1]  # writers must not pin a schema that may not exist yet
+    assert stmts[0].startswith("CREATE SCHEMA IF NOT EXISTS t_") and stmts[1].startswith("USE SCHEMA t_")
+    assert "CREATE OR REPLACE TABLE bronze_x" in stmts[2]
+    assert all("INSERT INTO bronze_x VALUES" in s for s in stmts[3:])
+    assert all(isinstance(p, dict) and ":p0_0" in s and "'A'" not in s for s, p in log[3:])  # values only in bound params
     with pytest.raises(ValueError):
         b.load_bronze(TENANT, "bad;name", df)
 
