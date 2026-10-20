@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..models import AuditEvent, Dataset, IngestionJob, SourceFile
-from . import analytics_store as store
+from .backends import get_backend
 from .profiling import parse_file, profile_frame, suggest_mapping
 from .storage import get_storage
 
@@ -31,7 +31,7 @@ def process_job(db: Session, job_id: str) -> IngestionJob:
         total = 0
         for name, df in frames.items():
             table = f"bronze_{job.id[:8].replace('-', '')}_{name}"[:60]
-            store.load_bronze(job.tenant_id, table, df)
+            get_backend().load_bronze(job.tenant_id, table, df)
             prof = profile_frame(df)
             ds = Dataset(tenant_id=job.tenant_id, file_id=f.id, name=name, table_name=table,
                          profile={**prof, "suggested_mapping": suggest_mapping(prof)})

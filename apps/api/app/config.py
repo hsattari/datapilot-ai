@@ -23,6 +23,14 @@ class Settings(BaseSettings):
     # Analytical store (Starter profile uses DuckDB)
     analytics_path: str = "./.data/analytics"
 
+    # Analytics engine: "duckdb" (Starter) or "databricks" (Scale; Unity Catalog)
+    analytics_backend: str = "duckdb"
+    databricks_server_hostname: str = ""
+    databricks_http_path: str = ""
+    databricks_token: str = ""            # write principal (ingestion/modelling)
+    databricks_readonly_token: str = ""   # SELECT-only principal for the query path (recommended)
+    databricks_catalog: str = ""
+
     # Upload limits
     max_upload_mb: int = 25
     max_sheet_rows: int = 1_000_000

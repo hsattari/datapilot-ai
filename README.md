@@ -16,11 +16,14 @@ proposal (v1.0, 10 Oct 2026).
 | Plan → controlled SQL → validator → read-only execution, provenance, caveats | **Complete**, tested |
 | Azure OpenAI planner + embeddings | **Verified by you** against your Azure resource (`scripts/test_azure_openai.py`: chat `gpt-4.1-mini` OK, embeddings `text-embedding-3-large` OK); the planner's JSON-plan call path itself has not been exercised end to end. Deterministic rule-based planner is the fallback |
 | RAG knowledge base (`/api/v1/knowledge/*`): chunking, Azure embeddings (1536-dim), keyword + vector hybrid retrieval, cited answers, tenant isolation | **Complete and tested on SQLite** (portable cosine search). The **PostgreSQL + pgvector path (migration 0002, HNSW index, `<=>` query) is written but UNTESTED** — pgvector was not available in the build sandbox; run it against a real server before relying on it |
-| Gold-question + security regression suite | **Complete** (44 tests) |
+| Gold-question + security regression suite | **Complete** (63 tests) |
 | Next.js UI (register/login, upload, profile, mapping approval, dashboard, Ask Your Data) | **Builds and typechecks**; not browser-tested |
 | dbt Core retail template | **Written; `dbt build` not run** (SQL logic checked on DuckDB against the reference data) |
 | Docker Compose, Terraform, CI workflow | **Written, not executed** (no Docker daemon / Terraform in the build sandbox) |
-| Databricks/PySpark/Delta/Unity Catalog, Fabric/OneLake/Power BI, Azure AI Search backend, MCP, Dataflow Gen2 | **Not implemented** — see `connectors/*/README.md`. They need external credentials/licences and are roadmap phases 5–7. |
+| MCP server (`apps/mcp`): 6 read-only tools over the REST API (tenant scoping/validation reused; no write, raw-SQL or tenant tools) | **Complete**; tested in-process and via a real stdio handshake. Not tested with a specific client app |
+| Analytics backend abstraction + **Databricks SQL / Unity Catalog adapter** (schema per tenant, read-only token for queries, named-parameter binding, PySpark ingest template) | **Written, mock-tested only — UNTESTED against a real workspace.** See `connectors/databricks/README.md` |
+| **Power BI semantic model export** (`GET /api/v1/export/powerbi`: TMSL + DAX from approved metrics, SQL-equivalent NULL handling) | **Generated, not executed in Power BI.** The partition is a template you bind to your source. See `docs/architecture/fabric-powerbi.md` |
+| Fabric Lakehouse/OneLake/Pipelines/Dataflow Gen2/Direct Lake, Azure AI Search backend, Entra ID auth | **Not implemented** (need your licensed capacity/workspace); guidance in `docs/architecture/fabric-powerbi.md` |
 
 The Starter profile uses DuckDB (one database file per tenant) as the analytical engine. Verify all
 Azure/dbt/Databricks/Fabric versions and APIs against current official documentation before production.

@@ -12,7 +12,7 @@ from .deps import Principal, get_principal, require_admin, require_writer
 from .routers.knowledge import router as knowledge_router
 from .schemas import ApproveIn, LoginIn, QuestionIn, RegisterIn, SourceIn
 from .security import create_token, hash_password, verify_password
-from .services import analytics_store as store
+from .services.backends import get_backend
 from .services import semantic
 from .services.planner import make_plan
 from .services.query_engine import QueryRejected, compile_plan, execute_readonly
@@ -132,7 +132,7 @@ def approve_dataset(dataset_id: str, body: ApproveIn, p: Principal = Depends(req
         if canon not in semantic.FACT_COLUMNS or src not in cols:
             raise HTTPException(422, f"Invalid mapping {canon} -> {src}")
     try:
-        result = store.build_fact_sales(p.tenant_id, d.table_name, body.mapping)
+        result = get_backend().build_fact_sales(p.tenant_id, d.table_name, body.mapping)
     except ValueError as e:
         raise HTTPException(422, str(e))
     d.model_status, d.column_mapping = "approved", body.mapping
@@ -171,16 +171,12 @@ def _run_plan(db: Session, p: Principal, plan, today: date | None = None) -> dic
     for dim in plan.dimensions:
         if dim not in metric.dimensions:
             raise QueryRejected(f"Dimension not allowed for metric: {dim}")
-    sql, params = compile_plan(plan, metric.expression, metric.aggregation, today)
+    backend = get_backend()
+    sql, params = compile_plan(plan, metric.expression, metric.aggregation, today, backend.month_expr("order_date"))
     cols, rows = execute_readonly(p.tenant_id, sql, params)
     caveats = ["Associations shown here do not establish causation."]
-    con = store.reader(p.tenant_id)
-    try:
-        fresh = con.execute("SELECT max(order_date) FROM fact_sales").fetchone()[0]
-        missing_cost = con.execute(
-            "SELECT count(*) FROM fact_sales WHERE cost_of_goods_sold IS NULL").fetchone()[0]
-    finally:
-        con.close()
+    fresh = backend.scalar(p.tenant_id, "SELECT max(order_date) FROM fact_sales")
+    missing_cost = backend.scalar(p.tenant_id, "SELECT count(*) FROM fact_sales WHERE cost_of_goods_sold IS NULL")
     if "cost_of_goods_sold" in metric.expression and missing_cost:
         caveats.append(f"{missing_cost} order rows have no cost data; profit is incomplete for them.")
     return {"columns": cols, "rows": rows, "sql": sql,
@@ -233,3 +229,16 @@ def dashboard(p: Principal = Depends(get_principal), db: Session = Depends(get_d
         tiles.append({"metric": x.name, "label": x.label, "total": total["rows"][0][0] if total["rows"] else None,
                       "trend": trend["rows"], "caveats": total["caveats"][1:]})
     return {"tiles": tiles}
+
+
+@app.get("/api/v1/export/powerbi")
+def export_powerbi(p: Principal = Depends(require_writer), db: Session = Depends(get_db)):
+    """Semantic model starting point (TMSL + DAX) generated from approved metrics only."""
+    from .services.powerbi import build_export
+    rows = db.scalars(select(m.Metric).where(m.Metric.tenant_id == p.tenant_id)).all()
+    out = build_export([{"name": x.name, "label": x.label, "description": x.description,
+                         "expression": x.expression, "aggregation": x.aggregation, "status": x.status,
+                         "version": x.version} for x in rows])
+    audit(db, p, "export.powerbi", measures=len(out["model_bim"]["model"]["tables"][0]["measures"]))
+    db.commit()
+    return out

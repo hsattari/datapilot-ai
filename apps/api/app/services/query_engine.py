@@ -11,10 +11,10 @@ from pydantic import BaseModel, Field, field_validator
 from sqlglot import exp
 
 from ..config import get_settings
-from . import analytics_store as store
+from .backends import get_backend
 
 DIM_SQL = {
-    "month": "strftime(order_date, '%Y-%m')",
+    "month": "{MONTH}",  # engine-specific, filled in by compile_plan
     "product": "product",
     "region": "region",
     "customer": "customer",
@@ -55,11 +55,13 @@ class Plan(BaseModel):
         return v
 
 
-def compile_plan(plan: Plan, expression: str, aggregation: str, today: date | None = None):
+def compile_plan(plan: Plan, expression: str, aggregation: str, today: date | None = None,
+                 month_expr: str | None = None):
     """Build SQL from a template; user-controlled values are bound parameters only."""
     today = today or date.today()
     agg = AGG_SQL[aggregation].format(e=expression)  # expression was validated at registration
-    dims = [f"{DIM_SQL[d]} AS {d}" for d in plan.dimensions]
+    month = month_expr or "strftime(order_date, '%Y-%m')"
+    dims = [f"{DIM_SQL[d].replace('{MONTH}', month)} AS {d}" for d in plan.dimensions]
     where, params = [], []
     if plan.time_range.type == "last_n_complete_months":
         first_this = today.replace(day=1)
@@ -82,10 +84,10 @@ def compile_plan(plan: Plan, expression: str, aggregation: str, today: date | No
     return sql, params
 
 
-def validate_select(sql: str) -> None:
+def validate_select(sql: str, dialect: str = "duckdb") -> None:
     """Defence in depth: a single read-only SELECT over allowlisted tables and functions."""
     try:
-        stmts = sqlglot.parse(sql, dialect="duckdb")
+        stmts = sqlglot.parse(sql, dialect=dialect)
     except sqlglot.errors.ParseError as e:
         raise QueryRejected(f"Unparseable SQL: {e}")
     stmts = [s for s in stmts if s is not None]
@@ -102,7 +104,7 @@ def validate_select(sql: str) -> None:
         if t.name.lower() not in ALLOWED_TABLES or t.args.get("db"):
             raise QueryRejected(f"Table not allowed: {t.name}")
     allowed_nodes = (exp.Sum, exp.Count, exp.Avg, exp.Distinct, exp.TimeToStr, exp.Cast,
-                     exp.TryCast, exp.Paren, exp.Binary, exp.Unary)
+                     exp.TryCast, exp.TimeStrToTime, exp.Paren, exp.Binary, exp.Unary)
     for fn in tree.find_all(exp.Func):
         if isinstance(fn, (exp.Column, exp.Literal)):
             continue
@@ -113,16 +115,6 @@ def validate_select(sql: str) -> None:
 
 
 def execute_readonly(tenant_id: str, sql: str, params: list) -> tuple[list[str], list[list]]:
-    validate_select(sql)
-    s = get_settings()
-    con = store.reader(tenant_id)  # read-only connection scoped to this tenant's database file
-    timer = threading.Timer(s.query_timeout_seconds, con.interrupt)
-    timer.start()
-    try:
-        cur = con.execute(sql, params)
-        cols = [d[0] for d in cur.description]
-        rows = [list(r) for r in cur.fetchmany(s.query_row_limit)]
-        return cols, rows
-    finally:
-        timer.cancel()
-        con.close()
+    backend = get_backend()
+    validate_select(sql, backend.dialect)
+    return backend.query(tenant_id, sql, params)
