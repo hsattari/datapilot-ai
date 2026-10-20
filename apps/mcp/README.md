@@ -2,7 +2,7 @@
 
 Read-only tools: `list_approved_metrics`, `ask_data`, `get_dashboard`, `list_datasets`, `search_knowledge`, `ask_knowledge`.
 
-    pip install mcp httpx
+    pip install "mcp<2" httpx   # the server uses the v1 FastMCP API; mcp 2.x renamed it, so a port is needed before allowing 2.x
     # get a token: POST /api/v1/auth/login
     set DATAPILOT_API_URL=http://localhost:8000      (PowerShell: $env:DATAPILOT_API_URL="...")
     set DATAPILOT_TOKEN=<token>
