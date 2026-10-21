@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, setToken } from "./api";
 
-type Tab = "home" | "sources" | "ask";
+type Tab = "home" | "sources" | "metrics" | "ask";
 const card = { background: "#fff", borderRadius: 8, padding: 16, boxShadow: "0 1px 3px #0001", marginBottom: 16 } as const;
 
 function Auth({ onAuthed }: { onAuthed: () => void }) {
@@ -52,6 +52,8 @@ function Sources() {
   const [msg, setMsg] = useState("");
   const [datasets, setDatasets] = useState<any[]>([]);
   const [profile, setProfile] = useState<any>(null);
+  const [quality, setQuality] = useState<any>(null);
+  const [versions, setVersions] = useState<any[]>([]);
   const refresh = useCallback(() => api("/datasets").then(setDatasets), []);
   useEffect(() => { refresh().catch(() => {}); }, [refresh]);
 
@@ -70,12 +72,16 @@ function Sources() {
       setMsg("Still processing — check back shortly.");
     } catch (e: any) { setMsg(e.message); }
   };
-  const open = async (id: string) => setProfile(await api(`/datasets/${id}/profile`));
+  const open = async (id: string) => {
+    setProfile(await api(`/datasets/${id}/profile`));
+    setQuality(await api(`/datasets/${id}/quality`).catch(() => null));
+    setVersions((await api(`/datasets/${id}/schema-versions`).catch(() => ({ versions: [] }))).versions);
+  };
   const approve = async () => {
     const mapping = Object.fromEntries(Object.entries<any>(profile.profile.suggested_mapping)
       .filter(([, v]) => !v.needs_clarification).map(([k, v]) => [k, v.column]));
     try { const r = await api(`/datasets/${profile.id}/approve`, { method: "POST", body: JSON.stringify({ mapping }) });
-      setMsg(`Model built: ${r.rows_loaded} rows loaded, ${r.rows_rejected} quarantined.`); refresh(); }
+      setMsg(`Model built: ${r.rows_loaded} rows loaded, ${r.rows_rejected} quarantined.`); refresh(); open(profile.id); }
     catch (e: any) { setMsg(e.message); }
   };
   return (<>
@@ -89,7 +95,41 @@ function Sources() {
       {Object.entries<any>(profile.profile.suggested_mapping).map(([k, v]) => <div key={k}>{k} ← {v.column} ({Math.round(v.confidence * 100)}%) {v.needs_clarification && <b style={{ color: "#b00020" }}>{v.needs_clarification}</b>}</div>)}
       <p><button onClick={approve}>Approve and build model</button></p>
     </div>}
+    {profile && quality && <div style={card} data-testid="quality">
+      <h3>Data quality: {quality.overall}</h3>
+      <table><thead><tr><th>Stage</th><th>Check</th><th>Result</th><th>Detail</th></tr></thead>
+        <tbody>{quality.results.map((r: any) => <tr key={r.stage + r.rule}><td>{r.stage}</td><td>{r.rule}</td>
+          <td style={{ color: r.status === "fail" ? "#b00020" : r.status === "warn" ? "#8a5a00" : "#1a7f37" }}>{r.status}</td><td>{r.message}</td></tr>)}</tbody></table>
+    </div>}
+    {profile && versions.length > 0 && <div style={card}>
+      <h3>Schema versions</h3>
+      {versions.map((v: any) => <div key={v.version}>v{v.version}: {v.columns.length} columns
+        {v.changes && (v.changes.added?.length || v.changes.removed?.length || v.changes.type_changed?.length) ?
+          <> — added {v.changes.added.join(", ") || "none"}; removed {v.changes.removed.join(", ") || "none"}; type changed {v.changes.type_changed.length}</> : null}</div>)}
+    </div>}
   </>);
+}
+
+function Metrics() {
+  const [rows, setRows] = useState<any[]>([]);
+  const [msg, setMsg] = useState("");
+  const refresh = useCallback(() => api("/metrics").then(setRows), []);
+  useEffect(() => { refresh().catch(e => setMsg(e.message)); }, [refresh]);
+  const approve = async (name: string) => {
+    try { await api(`/metrics/${name}/approve`, { method: "POST" }); setMsg(`Approved ${name}.`); await refresh(); }
+    catch (e: any) { setMsg(e.message); }
+  };
+  return (<>
+    <div style={card}>
+      <p style={{ marginTop: 0 }}>Only approved metrics can be used in answers and dashboards. Approval needs an administrator.</p>
+      {msg && <p role="status">{msg}</p>}
+      <table><thead><tr><th>Metric</th><th>Definition</th><th>Formula</th><th>Status</th><th></th></tr></thead>
+        <tbody>{rows.map(m => <tr key={m.name} data-metric={m.name}>
+          <td>{m.label} <small>v{m.version}</small></td><td>{m.description}</td><td><code>{m.expression}</code></td>
+          <td>{m.status === "approved" ? "Approved" : "Needs approval"}</td>
+          <td>{m.status !== "approved" && <button onClick={() => approve(m.name)}>Approve {m.label}</button>}</td>
+        </tr>)}</tbody></table>
+    </div></>);
 }
 
 function Ask() {
@@ -118,9 +158,9 @@ export default function Page() {
   return (
     <main style={{ maxWidth: 900, margin: "0 auto", padding: 24 }}>
       <nav style={{ marginBottom: 16 }}>
-        {(["home", "sources", "ask"] as Tab[]).map(t => <button key={t} onClick={() => setTab(t)} disabled={tab === t} style={{ marginRight: 8 }}>{{ home: "Home", sources: "Data Sources", ask: "Ask Your Data" }[t]}</button>)}
+        {(["home", "sources", "metrics", "ask"] as Tab[]).map(t => <button key={t} onClick={() => setTab(t)} disabled={tab === t} style={{ marginRight: 8 }}>{{ home: "Home", sources: "Data Sources", metrics: "Business Metrics", ask: "Ask Your Data" }[t]}</button>)}
       </nav>
-      {tab === "home" ? <Home /> : tab === "sources" ? <Sources /> : <Ask />}
+      {tab === "home" ? <Home /> : tab === "sources" ? <Sources /> : tab === "metrics" ? <Metrics /> : <Ask />}
     </main>
   );
 }

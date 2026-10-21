@@ -7,7 +7,7 @@
     python scripts/e2e_ui_test.py [screenshot_dir]      (set CHROMIUM_PATH to use a specific browser binary)
 
 Registers a user, uploads the reference CSV, approves the model, checks the dashboard (350 / 140), asks for gross
-profit (140) and checks an unsafe question is refused. Metric approval has no UI yet, so it is done via the API.
+profit (140) and checks an unsafe question is refused. Gross profit is approved through the Business Metrics screen; the quality panel is checked.
 """
 import json, sys, urllib.request
 from playwright.sync_api import sync_playwright, expect
@@ -51,8 +51,19 @@ with sync_playwright() as p:
     expect(page.get_by_text("Model built: 3 rows loaded, 0 quarantined.")).to_be_visible(timeout=15000)
     print("OK profile shown, mapping approved, model built")
 
-    tok = api("POST", "/api/v1/auth/login", {"email": EMAIL, "password": PW})["token"]
-    api("POST", "/api/v1/metrics/gross_profit/approve", token=tok)  # no UI for this yet (known gap)
+    expect(page.get_by_test_id("quality")).to_contain_text("Data quality: warn", timeout=10000)  # reference data is old: freshness warns
+    expect(page.get_by_test_id("quality")).to_contain_text("reconciliation")
+    page.screenshot(path=f"{S}/quality.png")
+    expect(page.get_by_test_id("quality")).to_contain_text("older than 90 days")
+    print("OK data-quality panel shows reconciliation pass and a stale-data warning")
+
+    page.get_by_role("button", name="Business Metrics").click()
+    row = page.locator("tr[data-metric=gross_profit]")
+    expect(row).to_contain_text("Needs approval", timeout=10000)
+    row.get_by_role("button", name="Approve Gross Profit").click()
+    expect(row).to_contain_text("Approved", timeout=10000)
+    page.screenshot(path=f"{S}/metrics.png")
+    print("OK gross profit approved in the UI")
 
     page.get_by_role("button", name="Home").click()
     expect(page.get_by_text("Net Revenue: 350")).to_be_visible(timeout=10000)
