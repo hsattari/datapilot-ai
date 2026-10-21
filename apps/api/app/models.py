@@ -153,3 +153,31 @@ class DocumentChunk(Base):
     chunk_index: Mapped[int] = mapped_column(Integer)
     content: Mapped[str] = mapped_column(Text)
     embedding: Mapped[list] = mapped_column(JSON)  # portable copy; PostgreSQL also gets embedding_vec (pgvector)
+
+
+class SchemaVersion(Base):
+    """One row per ingested version of a dataset (same source + dataset name); records drift vs the previous version."""
+    __tablename__ = "schema_versions"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id"), index=True)
+    source_id: Mapped[str] = mapped_column(String(36), index=True)
+    dataset_name: Mapped[str] = mapped_column(String(200))
+    version: Mapped[int] = mapped_column(Integer)
+    columns: Mapped[list] = mapped_column(JSON, default=list)   # [{name, type}]
+    changes: Mapped[dict] = mapped_column(JSON, default=dict)   # {added, removed, type_changed}
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class QualityResult(Base):
+    """Outcome of one data-quality rule for one dataset at one stage (profile | model)."""
+    __tablename__ = "quality_results"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id"), index=True)
+    stage: Mapped[str] = mapped_column(String(20))               # profile | model
+    rule: Mapped[str] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(10))              # pass | warn | fail
+    message: Mapped[str] = mapped_column(Text, default="")
+    observed: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

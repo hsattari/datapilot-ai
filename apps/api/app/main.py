@@ -13,7 +13,7 @@ from .routers.knowledge import router as knowledge_router
 from .schemas import ApproveIn, LoginIn, QuestionIn, RegisterIn, SourceIn
 from .security import create_token, hash_password, verify_password
 from .services.backends import get_backend
-from .services import semantic
+from .services import quality, semantic
 from .services.planner import make_plan
 from .services.query_engine import QueryRejected, compile_plan, execute_readonly
 from .services.storage import get_storage, safe_filename
@@ -123,6 +123,33 @@ def dataset_profile(dataset_id: str, p: Principal = Depends(get_principal), db: 
     return {"id": d.id, "name": d.name, "model_status": d.model_status, "profile": d.profile}
 
 
+@app.get("/api/v1/datasets/{dataset_id}/quality")
+def dataset_quality(dataset_id: str, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+    d = owned(db, m.Dataset, dataset_id, p.tenant_id)
+    rows = db.scalars(select(m.QualityResult).where(
+        m.QualityResult.tenant_id == p.tenant_id, m.QualityResult.dataset_id == d.id)
+        .order_by(m.QualityResult.stage, m.QualityResult.rule)).all()
+    results = [{"stage": r.stage, "rule": r.rule, "status": r.status, "message": r.message,
+                "observed": r.observed} for r in rows]
+    counts = {k: sum(1 for r in results if r["status"] == k) for k in ("pass", "warn", "fail")}
+    overall = "fail" if counts["fail"] else ("warn" if counts["warn"] else "pass")
+    return {"dataset_id": d.id, "overall": overall, "counts": counts, "results": results}
+
+
+@app.get("/api/v1/datasets/{dataset_id}/schema-versions")
+def dataset_schema_versions(dataset_id: str, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+    d = owned(db, m.Dataset, dataset_id, p.tenant_id)
+    cur = db.scalar(select(m.SchemaVersion).where(m.SchemaVersion.tenant_id == p.tenant_id,
+                                                  m.SchemaVersion.dataset_id == d.id))
+    if cur is None:
+        return {"versions": []}
+    rows = db.scalars(select(m.SchemaVersion).where(
+        m.SchemaVersion.tenant_id == p.tenant_id, m.SchemaVersion.source_id == cur.source_id,
+        m.SchemaVersion.dataset_name == cur.dataset_name).order_by(m.SchemaVersion.version)).all()
+    return {"versions": [{"version": r.version, "dataset_id": r.dataset_id, "columns": r.columns,
+                          "changes": r.changes, "created_at": r.created_at.isoformat()} for r in rows]}
+
+
 @app.post("/api/v1/datasets/{dataset_id}/approve")
 def approve_dataset(dataset_id: str, body: ApproveIn, p: Principal = Depends(require_writer),
                     db: Session = Depends(get_db)):
@@ -137,6 +164,8 @@ def approve_dataset(dataset_id: str, body: ApproveIn, p: Principal = Depends(req
         raise HTTPException(422, str(e))
     d.model_status, d.column_mapping = "approved", body.mapping
     d.profile = {**d.profile, "model_result": result}
+    quality.store_results(db, p.tenant_id, d.id, "model", quality.model_checks(
+        result, body.mapping, lambda sql: get_backend().scalar(p.tenant_id, sql)))
     audit(db, p, "dataset.approved", dataset_id=d.id, **result)
     db.commit()
     return result
