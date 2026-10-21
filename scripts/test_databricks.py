@@ -60,6 +60,19 @@ def step(name, fn):
         return False, None
 
 
+tok = s.databricks_token
+hints = []
+if not tok.startswith("dapi"):
+    hints.append("token does not start with 'dapi' - Databricks personal access tokens do. Did you paste something else "
+                 "(an Azure/Entra token, a client secret, the token ID or the comment)?")
+if tok != tok.strip() or any(c in tok for c in "\"' \t"):
+    hints.append("token contains quotes or spaces - remove them (NAME=value, nothing else on the line)")
+if len(tok) < 30:
+    hints.append(f"token is only {len(tok)} characters - it looks truncated")
+print(f"Token check: starts with 'dapi' = {tok.startswith('dapi')}, length = {len(tok)} (value not shown)")
+for h in hints:
+    print("  WARNING:", h)
+
 b = DatabricksBackend()
 tenant = str(uuid.uuid4())
 schema = b.schema(tenant)
@@ -82,7 +95,17 @@ def whoami():
 
 
 try:
-    results.append(step("1 connect, identify user, find catalog (Unity Catalog)", whoami)[0])
+    ok1 = step("1 connect, identify user, find catalog (Unity Catalog)", whoami)[0]
+    results.append(ok1)
+    if not ok1:
+        print("\nStopped: nothing else can work until step 1 passes. Likely causes, in order:")
+        print("  1. Token invalid, revoked, expired or not a personal access token (see warnings above). Generate a new one:")
+        print("     Databricks > profile > Settings > Developer > Access tokens > Generate new token.")
+        print("  2. Token scope too narrow. When generating, choose the 'sql' scope or 'Other APIs' (all APIs), not 'BI tools' only.")
+        print("  3. Workspace admin has disabled personal access tokens (Admin settings > Advanced > Personal access tokens).")
+        print("  4. Your user lacks 'Can use' on the SQL warehouse (SQL Warehouses > your warehouse > Permissions).")
+        raise SystemExit(1)
+    ok1 = True
     results.append(step("2 load bronze table (batched parameterised inserts)",
                         lambda: b.load_bronze(tenant, "bronze_ref", df))[0])
     ok, res = step("3 build fact_sales + quarantine", lambda: b.build_fact_sales(tenant, "bronze_ref", mapping))
@@ -113,6 +136,8 @@ try:
     results.append(step("6 scalar helper (freshness)", lambda: str(b.scalar(tenant, "SELECT max(order_date) FROM fact_sales")))[0])
 finally:
     def cleanup():
+        if not results or not results[0]:
+            return "nothing created"
         with b._connect(tenant, True) as c, c.cursor() as cur:
             cur.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
     step("cleanup: drop temporary schema", cleanup)
