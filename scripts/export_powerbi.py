@@ -2,7 +2,7 @@
 
     python scripts/export_powerbi.py you@example.com            (asks for the password; API on http://localhost:8000)
 
-Writes to ./powerbi_export/:
+Writes to <project folder>\\powerbi_export\\ (the full path is printed at the end):
     measures.dax   - the measures generated from your APPROVED metrics (one 'Name = expression' per measure)
     model.bim      - full TMSL model (for Tabular Editor / XMLA tools)
     fact_sales.csv - the reference data with the canonical column names the measures expect
@@ -31,7 +31,7 @@ if len(sys.argv) < 2:
     sys.exit(__doc__)
 tok = call("/auth/login", {"email": sys.argv[1], "password": getpass.getpass("Password: ")})["token"]
 out = call("/export/powerbi", token=tok)
-d = pathlib.Path("powerbi_export"); d.mkdir(exist_ok=True)
+d = pathlib.Path(__file__).resolve().parents[1] / "powerbi_export"; d.mkdir(exist_ok=True)  # always inside the project folder
 (d / "measures.dax").write_text(out["measures_dax"], encoding="utf-8")
 (d / "model.bim").write_text(json.dumps(out["model_bim"], indent=2), encoding="utf-8")
 print("Measures exported:", [m["name"] for m in out["model_bim"]["model"]["tables"][0]["measures"]])

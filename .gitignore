@@ -13,3 +13,4 @@ terraform.tfvars
 profiles.yml
 target/
 logs/
+powerbi_export/
