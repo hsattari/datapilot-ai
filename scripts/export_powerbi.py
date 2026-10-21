@@ -8,7 +8,7 @@ Writes to ./powerbi_export/:
     fact_sales.csv - the reference data with the canonical column names the measures expect
                      (only written if data/synthetic/orders_reference.csv exists)
 """
-import csv, getpass, json, pathlib, sys, urllib.request
+import csv, getpass, json, pathlib, sys, urllib.error, urllib.request
 
 API = "http://localhost:8000/api/v1"
 
@@ -17,7 +17,14 @@ def call(path, body=None, token=None):
     req = urllib.request.Request(API + path, data=json.dumps(body).encode() if body is not None else None,
                                  method="POST" if body is not None else "GET",
                                  headers={"Content-Type": "application/json", **({"Authorization": f"Bearer {token}"} if token else {})})
-    return json.load(urllib.request.urlopen(req))
+    try:
+        return json.load(urllib.request.urlopen(req))
+    except urllib.error.HTTPError as e:
+        hint = {401: "wrong email or password", 500: "the API crashed - read the traceback in the window where the API is running "
+                "(most often the database is not running or `alembic upgrade head` was not run after git pull)"}.get(e.code, "")
+        sys.exit(f"API returned {e.code} for {path}: {e.read().decode(errors='replace')[:300]}\n{hint}")
+    except urllib.error.URLError as e:
+        sys.exit(f"Cannot reach the API at {API}: {e.reason}. Start it first (cd apps/api, then uvicorn app.main:app).")
 
 
 if len(sys.argv) < 2:
