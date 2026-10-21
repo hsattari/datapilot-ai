@@ -26,7 +26,26 @@ s = get_settings()
 missing = [k.upper() for k in ("databricks_server_hostname", "databricks_http_path", "databricks_catalog",
                                "databricks_token") if not getattr(s, k)]
 if missing:
-    sys.exit(f"Missing in .env: {', '.join(missing)}")
+    env = pathlib.Path(".env").resolve()
+    print(f"Missing settings: {', '.join(missing)}")
+    print(f"Reading: {env}  (the script reads .env from the folder you run it in)")
+    if not env.exists():
+        sys.exit("  .env does not exist there. Run from the repo root, and check it is not named .env.txt")
+    raw = env.read_bytes()
+    print(f"  size={len(raw)} bytes, NUL bytes={raw.count(bytes([0]))}, "
+          f"UTF-8 BOM={raw[:3] == bytes([239, 187, 191])}, UTF-16 BOM={raw[:2] in (bytes([255, 254]), bytes([254, 255]))}")
+    if raw.count(bytes([0])):
+        print("  -> The file contains UTF-16 text (typical of PowerShell `>>` / `echo`). Re-save it as UTF-8 in Notepad "
+              "(File > Save As > Encoding: UTF-8) or retype the lines in a text editor.")
+    try:
+        from dotenv import dotenv_values
+        vals = dotenv_values(env, encoding="utf-8-sig")
+        print("  Variable names the parser sees (value lengths only):")
+        for k, v in vals.items():
+            print(f"    {k}: {len(v) if v else 0} chars")
+    except ImportError:
+        print("  (pip install python-dotenv to list parsed names)")
+    sys.exit("Fix the .env as above, then rerun.")
 if s.databricks_server_hostname.startswith("http"):
     sys.exit("DATABRICKS_SERVER_HOSTNAME must be the host only (no https://)")
 
