@@ -7,7 +7,7 @@
     python scripts/e2e_ui_test.py [screenshot_dir]      (set CHROMIUM_PATH to use a specific browser binary)
 
 Registers a user, uploads the reference CSV, approves the model, checks the dashboard (350 / 140), asks for gross
-profit (140) and checks an unsafe question is refused. Gross profit is approved through the Business Metrics screen; the quality panel is checked.
+profit (140) and asks revenue by category after approving a products file, checks an unsafe question is refused. Gross profit is approved through the Business Metrics screen; the quality panel is checked.
 """
 import json, sys, urllib.request
 from playwright.sync_api import sync_playwright, expect
@@ -80,6 +80,25 @@ with sync_playwright() as p:
     expect(page.locator("code", has_text="net_sales - cost_of_goods_sold")).to_be_visible()
     page.screenshot(path=f"{S}/ask.png")
     print("OK ask -> 140 with definition shown")
+
+    page.get_by_role("button", name="Data Sources").click()
+    page.locator("input[type=file]").set_input_files(f"{REPO}/data/synthetic/products.csv")
+    expect(page.get_by_text("Ingested.")).to_be_visible(timeout=30000)
+    page.get_by_role("link", name="products", exact=True).click()
+    expect(page.get_by_text("This looks like a products list")).to_be_visible()
+    page.get_by_role("button", name="Approve as products list").click()
+    expect(page.get_by_text("Products list built: 2 loaded, 0 quarantined.")).to_be_visible(timeout=15000)
+    expect(page.get_by_test_id("joins")).to_contain_text("2 of 2 (100%)", timeout=10000)
+    page.screenshot(path=f"{S}/joins.png")
+    print("OK products file recognised, approved as a dimension, joins to sales at 100%")
+
+    page.get_by_role("button", name="Ask Your Data").click()
+    page.get_by_placeholder("e.g. Why has gross profit").fill("net revenue by category")
+    page.get_by_role("button", name="Ask", exact=True).click()
+    expect(page.get_by_text("How this was calculated")).to_be_visible(timeout=10000)
+    cells = page.locator("table td").all_inner_texts()
+    assert cells[:4] == ["Accessories", "200", "Hardware", "150"], cells
+    print("OK ask by category -> Accessories 200, Hardware 150")
 
     page.get_by_placeholder("e.g. Why has gross profit").fill("drop table fact_sales")
     page.get_by_role("button", name="Ask", exact=True).click()

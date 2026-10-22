@@ -13,6 +13,7 @@ import pandas as pd
 
 from ..config import get_settings
 from . import analytics_store as duck
+from .dimensions import DIMS
 
 _IDENT = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 _TENANT = re.compile(r"^[0-9a-f-]{36}$")
@@ -25,6 +26,8 @@ class Backend(Protocol):
     def month_expr(self, col: str) -> str: ...
     def load_bronze(self, tenant_id: str, table: str, df: pd.DataFrame) -> None: ...
     def build_fact_sales(self, tenant_id: str, bronze_table: str, mapping: dict[str, str]) -> dict: ...
+    def build_dimension(self, tenant_id: str, bronze_table: str, role: str, mapping: dict[str, str]) -> dict: ...
+    def tables(self, tenant_id: str) -> set[str]: ...
     def query(self, tenant_id: str, sql: str, params: list) -> tuple[list[str], list[list]]: ...
     def scalar(self, tenant_id: str, sql: str) -> Any: ...
 
@@ -46,6 +49,12 @@ class DuckDBBackend:
 
     def build_fact_sales(self, tenant_id, bronze_table, mapping):
         return duck.build_fact_sales(tenant_id, bronze_table, mapping)
+
+    def build_dimension(self, tenant_id, bronze_table, role, mapping):
+        return duck.build_dimension(tenant_id, bronze_table, role, mapping)
+
+    def tables(self, tenant_id):
+        return duck.list_tables(tenant_id)
 
     def query(self, tenant_id, sql, params):
         s = get_settings()
@@ -177,6 +186,39 @@ class DatabricksBackend:
             assert loaded + rejected == total  # reconcile: no silent record loss
         return {"rows_loaded": loaded, "rows_rejected": rejected, "cost_missing_rows": cost_missing,
                 "has_cost": "cost_of_goods_sold" in mapping}
+
+    def build_dimension(self, tenant_id, bronze_table, role, mapping):
+        bronze_table = _ident(bronze_table)
+        d = DIMS[role]
+        kc, ac = d["key_canon"], d["attr_canon"]
+        if kc not in mapping or ac not in mapping:
+            raise ValueError(f"Missing required mappings: {[c for c in (kc, ac) if c not in mapping]}")
+        src_k, src_a = _ident(mapping[kc]), _ident(mapping[ac])
+        table, k, a = d["table"], d["key_col"], d["attr_col"]
+        with self._connect(tenant_id, True) as conn, conn.cursor() as cur:
+            self._exec(cur, f"USE SCHEMA {self.schema(tenant_id)}")
+            self._exec(cur, f"CREATE OR REPLACE TEMPORARY VIEW dstg AS SELECT NULLIF(TRIM(`{src_k}`), '') AS {k}, "
+                            f"NULLIF(TRIM(`{src_a}`), '') AS {a} FROM {bronze_table}")
+            self._exec(cur, f"CREATE OR REPLACE TEMPORARY VIEW dranked AS SELECT *, row_number() OVER "
+                            f"(PARTITION BY {k} ORDER BY {a} ASC NULLS LAST) AS rn FROM dstg WHERE {k} IS NOT NULL")
+            self._exec(cur, f"CREATE OR REPLACE TABLE {table} AS SELECT {k}, {a} FROM dranked WHERE rn = 1")
+            self._exec(cur, f"CREATE OR REPLACE TABLE quarantine_{table} AS SELECT {k}, {a} FROM dstg "
+                            f"WHERE {k} IS NULL UNION ALL SELECT {k}, {a} FROM dranked WHERE rn > 1")
+
+            def one(q):
+                self._exec(cur, q)
+                return cur.fetchone()[0]
+
+            loaded, rejected = one(f"SELECT count(*) FROM {table}"), one(f"SELECT count(*) FROM quarantine_{table}")
+            total = one("SELECT count(*) FROM dstg")
+            no_attr = one(f"SELECT count(*) FROM {table} WHERE {a} IS NULL")
+            assert loaded + rejected == total
+        return {"rows_loaded": loaded, "rows_rejected": rejected, "attribute_missing_rows": no_attr, "role": role}
+
+    def tables(self, tenant_id):
+        with self._connect(tenant_id, False) as conn, conn.cursor() as cur:
+            self._exec(cur, "SHOW TABLES")
+            return {r[1] for r in cur.fetchall()}  # columns: database, tableName, isTemporary
 
     def query(self, tenant_id, sql, params):
         named_sql, named = self.to_named(sql, params)

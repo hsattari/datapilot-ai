@@ -9,3 +9,25 @@ models:
         tests: [not_null]
       - name: net_sales
         tests: [not_null]
+      - name: product
+        tests:
+          - relationships:
+              to: ref('dim_product')
+              field: product_key
+              config: {severity: warn}   # orphan products are allowed (shown as Unassigned) but flagged
+      - name: customer
+        tests:
+          - relationships:
+              to: ref('dim_customer')
+              field: customer_key
+              config: {severity: warn}
+  - name: dim_product
+    description: Product list; unique non-blank key.
+    columns:
+      - name: product_key
+        tests: [not_null, unique]
+  - name: dim_customer
+    description: Customer list; unique non-blank key.
+    columns:
+      - name: customer_key
+        tests: [not_null, unique]

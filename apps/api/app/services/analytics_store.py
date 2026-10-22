@@ -10,6 +10,7 @@ import duckdb
 import pandas as pd
 
 from ..config import get_settings
+from .dimensions import DIMS
 
 _IDENT = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 
@@ -91,3 +92,39 @@ def build_fact_sales(tenant_id: str, bronze_table: str, mapping: dict[str, str])
         con.close()
     return {"rows_loaded": loaded, "rows_rejected": rejected, "cost_missing_rows": cost_missing,
             "has_cost": "cost_of_goods_sold" in mapping}
+
+
+def build_dimension(tenant_id: str, bronze_table: str, role: str, mapping: dict[str, str]) -> dict:
+    """Build dim_product / dim_customer: unique non-blank key; duplicates and blank keys go to quarantine."""
+    bronze_table = ident(bronze_table)
+    d = DIMS[role]
+    kc, ac = d["key_canon"], d["attr_canon"]
+    if kc not in mapping or ac not in mapping:
+        raise ValueError(f"Missing required mappings: {[c for c in (kc, ac) if c not in mapping]}")
+    src_k, src_a = ident(mapping[kc]), ident(mapping[ac])
+    table, k, a = d["table"], d["key_col"], d["attr_col"]
+    con = writer(tenant_id)
+    try:
+        con.execute(f'CREATE OR REPLACE TEMP TABLE dstg AS SELECT NULLIF(TRIM("{src_k}"), \'\') AS {k}, '
+                    f'NULLIF(TRIM("{src_a}"), \'\') AS {a} FROM "{bronze_table}"')
+        con.execute(f"CREATE OR REPLACE TEMP TABLE dranked AS SELECT *, row_number() OVER "
+                    f"(PARTITION BY {k} ORDER BY {a} NULLS LAST) AS rn FROM dstg WHERE {k} IS NOT NULL")
+        con.execute(f"CREATE OR REPLACE TABLE {table} AS SELECT {k}, {a} FROM dranked WHERE rn = 1")
+        con.execute(f"CREATE OR REPLACE TABLE quarantine_{table} AS SELECT {k}, {a} FROM dstg WHERE {k} IS NULL "
+                    f"UNION ALL SELECT {k}, {a} FROM dranked WHERE rn > 1")
+        loaded = con.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+        rejected = con.execute(f"SELECT count(*) FROM quarantine_{table}").fetchone()[0]
+        total = con.execute("SELECT count(*) FROM dstg").fetchone()[0]
+        no_attr = con.execute(f"SELECT count(*) FROM {table} WHERE {a} IS NULL").fetchone()[0]
+        assert loaded + rejected == total
+    finally:
+        con.close()
+    return {"rows_loaded": loaded, "rows_rejected": rejected, "attribute_missing_rows": no_attr, "role": role}
+
+
+def list_tables(tenant_id: str) -> set[str]:
+    con = reader(tenant_id)
+    try:
+        return {r[0] for r in con.execute("SELECT table_name FROM information_schema.tables").fetchall()}
+    finally:
+        con.close()

@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -19,6 +21,7 @@ class SourceIn(BaseModel):
 
 class ApproveIn(BaseModel):
     mapping: dict[str, str]  # canonical field -> source column
+    role: Literal["fact_sales", "dim_product", "dim_customer"] = "fact_sales"
 
 
 class QuestionIn(BaseModel):

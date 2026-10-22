@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from .dimensions import DIMS
+
 CANONICAL_SYNONYMS = {
     "order_id": ["order_id", "orderid", "order id", "order", "order_no", "order number"],
     "order_date": ["order_date", "order date", "date", "ordered_at", "transaction_date"],
@@ -111,6 +113,21 @@ def profile_frame(df: pd.DataFrame) -> dict:
         info["sample"] = [str(v) for v in s[~blank].head(3)]
         cols.append(info)
     return {"row_count": int(len(df)), "duplicate_rows": int(df.duplicated().sum()), "columns": cols}
+
+
+def suggest_dimension(profile: dict, fact_like: bool) -> dict | None:
+    """If a file looks like a products or customers list (a key column plus a category/segment column) and not
+    like sales, propose it as a dimension. Never auto-applied: the user approves it."""
+    if fact_like:
+        return None
+    names = [c["name"] for c in profile["columns"]]
+    for role, d in DIMS.items():
+        key = next((n for n in names if n in {slugify(x) for x in d["key_syn"]}), None)
+        attr = next((n for n in names if n != key and n in {slugify(x) for x in d["attr_syn"]}), None)
+        if key and attr:
+            return {"role": role, "label": d["label"], "confidence": 0.85,
+                    "mapping": {d["key_canon"]: key, d["attr_canon"]: attr}}
+    return None
 
 
 def suggest_mapping(profile: dict) -> dict:

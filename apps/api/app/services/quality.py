@@ -93,3 +93,46 @@ def record_schema_version(db: Session, ds: Dataset, source_id: str, profile: dic
     db.add(SchemaVersion(tenant_id=ds.tenant_id, dataset_id=ds.id, source_id=source_id, dataset_name=ds.name,
                          version=(prev.version + 1) if prev else 1, columns=cols, changes=changes))
     return changes if prev else None
+
+
+def dimension_checks(result: dict) -> list[dict]:
+    loaded, rejected = result["rows_loaded"], result["rows_rejected"]
+    total = loaded + rejected
+    out = [_r("reconciliation", "pass", f"{loaded} loaded + {rejected} quarantined = {total} staged",
+              loaded=loaded, rejected=rejected),
+           _r("key_unique", "pass" if not rejected else "warn",
+              "Every key is present and unique" if not rejected else
+              f"{rejected} rows had a blank or repeated key and were quarantined (the first value per key is kept)",
+              rejected=rejected)]
+    miss = result.get("attribute_missing_rows", 0)
+    out.append(_r("attribute_coverage", "pass" if not miss else "warn",
+                  "Every key has a category/segment" if not miss else f"{miss} keys have no category/segment",
+                  missing=miss))
+    return out
+
+
+def relationship_stats(scalar, role: str) -> dict | None:
+    """How much of the sales data joins to this dimension. None if sales are not modelled yet."""
+    from .dimensions import DIMS
+    d = DIMS[role]
+    fc, t, k = d["fact_col"], d["table"], d["key_col"]
+    try:
+        keys = int(scalar(f"SELECT count(DISTINCT {fc}) FROM fact_sales WHERE {fc} IS NOT NULL") or 0)
+        matched = int(scalar(f"SELECT count(DISTINCT f.{fc}) FROM fact_sales f JOIN {t} d ON f.{fc} = d.{k}") or 0)
+        rows = int(scalar(f"SELECT count(*) FROM fact_sales WHERE {fc} IS NOT NULL") or 0)
+        rows_ok = int(scalar(f"SELECT count(*) FROM fact_sales f JOIN {t} d ON f.{fc} = d.{k}") or 0)
+    except Exception:  # sales not modelled yet
+        return None
+    pct = matched / keys if keys else 1.0
+    return {"role": role, "label": d["label"], "fact_column": fc, "dimension_key": k,
+            "sales_keys": keys, "matched_keys": matched, "orphan_keys": keys - matched,
+            "key_coverage": round(pct, 4), "rows_unassigned": rows - rows_ok,
+            "status": "pass" if keys == matched else ("warn" if pct >= 0.5 else "fail")}
+
+
+def relationship_result(stats: dict) -> dict:
+    msg = (f"All {stats['sales_keys']} {stats['fact_column']} values in sales match the {stats['label'].lower()} list"
+           if not stats["orphan_keys"] else
+           f"{stats['orphan_keys']} of {stats['sales_keys']} {stats['fact_column']} values in sales have no match; "
+           f"{stats['rows_unassigned']} sales rows are shown as 'Unassigned'")
+    return _r("join_coverage", stats["status"], msg, **{k: v for k, v in stats.items() if k not in ("status", "label")})

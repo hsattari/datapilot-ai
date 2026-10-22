@@ -8,3 +8,7 @@ sources:
           - name: order_id
           - name: order_date
           - name: net_sales
+      - name: products
+        description: Optional product list (product, category). Duplicate or blank keys are quarantined.
+      - name: customers
+        description: Optional customer list (customer_id, segment). Duplicate or blank keys are quarantined.

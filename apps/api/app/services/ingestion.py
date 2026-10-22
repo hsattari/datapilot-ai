@@ -11,7 +11,7 @@ from ..config import get_settings
 from ..models import AuditEvent, Dataset, IngestionJob, SourceFile
 from .backends import get_backend
 from .quality import profile_checks, record_schema_version, store_results
-from .profiling import parse_file, profile_frame, suggest_mapping
+from .profiling import parse_file, profile_frame, suggest_dimension, suggest_mapping
 from .storage import get_storage
 
 MAX_ATTEMPTS = 3
@@ -34,8 +34,10 @@ def process_job(db: Session, job_id: str) -> IngestionJob:
             table = f"bronze_{job.id[:8].replace('-', '')}_{name}"[:60]
             get_backend().load_bronze(job.tenant_id, table, df)
             prof = profile_frame(df)
+            sm = suggest_mapping(prof)
             ds = Dataset(tenant_id=job.tenant_id, file_id=f.id, name=name, table_name=table,
-                         profile={**prof, "suggested_mapping": suggest_mapping(prof)})
+                         profile={**prof, "suggested_mapping": sm,
+                                  "suggested_dimension": suggest_dimension(prof, bool(sm.get("order_id") or sm.get("net_sales")))})
             db.add(ds)
             db.flush()
             drift = record_schema_version(db, ds, f.source_id, prof)

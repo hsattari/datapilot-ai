@@ -54,6 +54,7 @@ function Sources() {
   const [profile, setProfile] = useState<any>(null);
   const [quality, setQuality] = useState<any>(null);
   const [versions, setVersions] = useState<any[]>([]);
+  const [rels, setRels] = useState<any[]>([]);
   const refresh = useCallback(() => api("/datasets").then(setDatasets), []);
   useEffect(() => { refresh().catch(() => {}); }, [refresh]);
 
@@ -76,6 +77,7 @@ function Sources() {
     setProfile(await api(`/datasets/${id}/profile`));
     setQuality(await api(`/datasets/${id}/quality`).catch(() => null));
     setVersions((await api(`/datasets/${id}/schema-versions`).catch(() => ({ versions: [] }))).versions);
+    setRels((await api("/relationships").catch(() => ({ relationships: [] }))).relationships);
   };
   const approve = async () => {
     const mapping = Object.fromEntries(Object.entries<any>(profile.profile.suggested_mapping)
@@ -84,22 +86,40 @@ function Sources() {
       setMsg(`Model built: ${r.rows_loaded} rows loaded, ${r.rows_rejected} quarantined.`); refresh(); open(profile.id); }
     catch (e: any) { setMsg(e.message); }
   };
+  const approveDim = async () => {
+    const sd = profile.profile.suggested_dimension;
+    try { const r = await api(`/datasets/${profile.id}/approve`, { method: "POST", body: JSON.stringify({ mapping: sd.mapping, role: sd.role }) });
+      setMsg(`${sd.label} list built: ${r.rows_loaded} loaded, ${r.rows_rejected} quarantined.`); refresh(); open(profile.id); }
+    catch (e: any) { setMsg(e.message); }
+  };
   return (<>
     <div style={card}><input type="file" accept=".csv,.xlsx,.txt,.json,.jsonl" onChange={e => e.target.files?.[0] && upload(e.target.files[0])} /> <span>{msg}</span></div>
-    <div style={card}>{datasets.map(d => <div key={d.id}><a href="#" onClick={e => { e.preventDefault(); open(d.id); }}>{d.name}</a> — {d.rows} rows — {d.model_status}</div>)}</div>
+    <div style={card}>{datasets.map(d => <div key={d.id}><a href="#" onClick={e => { e.preventDefault(); open(d.id); }}>{d.name}</a> — {d.rows} rows — {d.model_status}{d.role && d.role !== "fact_sales" ? ` (${d.role === "dim_product" ? "products" : "customers"} list)` : ""}</div>)}</div>
     {profile && <div style={card}>
       <h3>{profile.name}</h3>
       <table><thead><tr><th>Column</th><th>Type</th><th>Nulls</th><th>Distinct</th></tr></thead>
         <tbody>{profile.profile.columns.map((c: any) => <tr key={c.name}><td>{c.name}</td><td>{c.type}</td><td>{c.null_count}</td><td>{c.distinct}</td></tr>)}</tbody></table>
       <h4>Proposed mapping</h4>
       {Object.entries<any>(profile.profile.suggested_mapping).map(([k, v]) => <div key={k}>{k} ← {v.column} ({Math.round(v.confidence * 100)}%) {v.needs_clarification && <b style={{ color: "#b00020" }}>{v.needs_clarification}</b>}</div>)}
-      <p><button onClick={approve}>Approve and build model</button></p>
+      {profile.profile.suggested_dimension && <>
+        <h4>This looks like a {profile.profile.suggested_dimension.label.toLowerCase()} list</h4>
+        <div>{Object.entries<string>(profile.profile.suggested_dimension.mapping).map(([k, v]) => <div key={k}>{k} ← {v}</div>)}</div>
+        <p><button onClick={approveDim}>Approve as {profile.profile.suggested_dimension.label.toLowerCase()} list</button></p></>}
+      {!profile.profile.suggested_dimension && <p><button onClick={approve}>Approve and build model</button></p>}
     </div>}
     {profile && quality && <div style={card} data-testid="quality">
       <h3>Data quality: {quality.overall}</h3>
       <table><thead><tr><th>Stage</th><th>Check</th><th>Result</th><th>Detail</th></tr></thead>
         <tbody>{quality.results.map((r: any) => <tr key={r.stage + r.rule}><td>{r.stage}</td><td>{r.rule}</td>
           <td style={{ color: r.status === "fail" ? "#b00020" : r.status === "warn" ? "#8a5a00" : "#1a7f37" }}>{r.status}</td><td>{r.message}</td></tr>)}</tbody></table>
+    </div>}
+    {profile && rels.length > 0 && <div style={card} data-testid="joins">
+      <h3>Joins to sales</h3>
+      <table><thead><tr><th>List</th><th>Sales key</th><th>Matched</th><th>Sales rows shown as Unassigned</th></tr></thead>
+        <tbody>{rels.map((r: any) => <tr key={r.role}><td>{r.dataset}</td>
+          <td>{r.sales_modelled ? `${r.fact_column} → ${r.dimension_key}` : "waiting for approved sales data"}</td>
+          <td>{r.sales_modelled ? `${r.matched_keys} of ${r.sales_keys} (${Math.round(r.key_coverage * 100)}%)` : "–"}</td>
+          <td>{r.sales_modelled ? r.rows_unassigned : "–"}</td></tr>)}</tbody></table>
     </div>}
     {profile && versions.length > 0 && <div style={card}>
       <h3>Schema versions</h3>
@@ -137,7 +157,7 @@ function Ask() {
   const [a, setA] = useState<any>(null);
   const go = async () => setA(await api("/analytics/query", { method: "POST", body: JSON.stringify({ question: q }) }).catch(e => ({ outcome: "error", message: e.message })));
   return (<>
-    <div style={card}><input style={{ width: "70%" }} placeholder="e.g. Why has gross profit changed over the last 3 months?" value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => e.key === "Enter" && go()} /> <button onClick={go}>Ask</button></div>
+    <div style={card}><input style={{ width: "70%" }} placeholder="e.g. Why has gross profit changed over the last 3 months? Or: net revenue by category" value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => e.key === "Enter" && go()} /> <button onClick={go}>Ask</button></div>
     {a && <div style={card}>
       {a.outcome !== "answered" ? <p>{a.message}</p> : <>
         <table><thead><tr>{a.columns.map((c: string) => <th key={c}>{c}</th>)}</tr></thead>

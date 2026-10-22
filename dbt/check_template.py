@@ -16,6 +16,8 @@ import duckdb
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 TEMPLATE = ROOT / "dbt" / "templates" / "retail"
 CSV = ROOT / "data" / "synthetic" / "orders_reference.csv"
+PRODUCTS = ROOT / "data" / "synthetic" / "products.csv"
+CUSTOMERS = ROOT / "data" / "synthetic" / "customers.csv"
 
 
 def dbt(profiles: pathlib.Path, *args) -> subprocess.CompletedProcess:
@@ -31,6 +33,8 @@ with tempfile.TemporaryDirectory() as d:
     con = duckdb.connect(str(db))
     con.execute("CREATE SCHEMA raw_sales")
     con.execute(f"CREATE TABLE raw_sales.orders AS SELECT * FROM read_csv('{CSV}', all_varchar=true)")
+    con.execute(f"CREATE TABLE raw_sales.products AS SELECT * FROM read_csv('{PRODUCTS}', all_varchar=true)")
+    con.execute(f"CREATE TABLE raw_sales.customers AS SELECT * FROM read_csv('{CUSTOMERS}', all_varchar=true)")
     con.close()
 
     r = dbt(d, "build")
@@ -39,8 +43,12 @@ with tempfile.TemporaryDirectory() as d:
     con = duckdb.connect(str(db), read_only=True)
     gp = con.execute("select sum(net_sales - cost_of_goods_sold) from fact_sales").fetchone()[0]
     assert float(gp) == 140, f"gross profit {gp}"
-    con.close()
     print("OK  dbt build passed, gross profit = 140")
+    by_cat = dict(con.execute("select coalesce(p.category,'Unassigned'), sum(net_sales) from fact_sales f "
+                              "left join dim_product p on f.product = p.product_key group by 1").fetchall())
+    assert {k: float(v) for k, v in by_cat.items()} == {"Hardware": 150, "Accessories": 200}, by_cat
+    print("OK  revenue by category via the dimension join: Hardware 150, Accessories 200")
+    con.close()
 
     con = duckdb.connect(str(db))
     con.execute("INSERT INTO raw_sales.orders VALUES ('D','not-a-date','W','N','C9','10','5')")
@@ -52,6 +60,21 @@ with tempfile.TemporaryDirectory() as d:
     assert con.execute("select count(*) from fact_sales").fetchone()[0] == 3
     con.close()
     print("OK  bad date quarantined; counts reconcile")
+
+    con = duckdb.connect(str(db))
+    con.execute("INSERT INTO raw_sales.products VALUES ('Widget','Hardware','10'), (' ','Blank','1')")  # repeated + blank key
+    con.execute("INSERT INTO raw_sales.orders VALUES ('E','2026-03-05','Gizmo','N','C1','50','20')")  # product not in the list
+    con.close()
+    r = dbt(d, "build")
+    assert r.returncode == 0, "orphans and repeated keys must warn/quarantine, not fail the build:\n" + r.stdout[-1500:]
+    assert "WARN" in r.stdout and "relationships" in r.stdout, "orphan product must raise a relationships warning"
+    con = duckdb.connect(str(db), read_only=True)
+    assert con.execute("select count(*) from dim_product").fetchone()[0] == 2
+    assert con.execute("select count(*) from quarantine_dim_product").fetchone()[0] == 2
+    tot = con.execute("select sum(net_sales) from fact_sales f left join dim_product p on f.product = p.product_key").fetchone()[0]
+    assert float(tot) == float(con.execute("select sum(net_sales) from fact_sales").fetchone()[0]), "join changed the total"
+    con.close()
+    print("OK  repeated/blank keys quarantined, orphan product warns, join keeps totals")
 
     con = duckdb.connect(str(db))
     con.execute("INSERT INTO raw_sales.orders VALUES ('A','2026-03-01','W','N','C1','10','5')")

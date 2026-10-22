@@ -13,6 +13,7 @@ from .routers.knowledge import router as knowledge_router
 from .schemas import ApproveIn, LoginIn, QuestionIn, RegisterIn, SourceIn
 from .security import create_token, hash_password, verify_password
 from .services.backends import get_backend
+from .services.dimensions import ATTR_TO_ROLE, DIMS, mapping_columns
 from .services import quality, semantic
 from .services.planner import make_plan
 from .services.query_engine import QueryRejected, compile_plan, execute_readonly
@@ -113,7 +114,7 @@ def get_job(job_id: str, p: Principal = Depends(get_principal), db: Session = De
 @app.get("/api/v1/datasets")
 def list_datasets(p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     rows = db.scalars(select(m.Dataset).where(m.Dataset.tenant_id == p.tenant_id)).all()
-    return [{"id": d.id, "name": d.name, "model_status": d.model_status,
+    return [{"id": d.id, "name": d.name, "model_status": d.model_status, "role": d.profile.get("role"),
              "rows": d.profile.get("row_count")} for d in rows]
 
 
@@ -155,20 +156,58 @@ def approve_dataset(dataset_id: str, body: ApproveIn, p: Principal = Depends(req
                     db: Session = Depends(get_db)):
     d = owned(db, m.Dataset, dataset_id, p.tenant_id)
     cols = {c["name"] for c in d.profile["columns"]}
+    allowed = set(semantic.FACT_COLUMNS) if body.role == "fact_sales" else set(mapping_columns(body.role))
     for canon, src in body.mapping.items():
-        if canon not in semantic.FACT_COLUMNS or src not in cols:
+        if canon not in allowed or src not in cols:
             raise HTTPException(422, f"Invalid mapping {canon} -> {src}")
+    scalar = lambda sql: get_backend().scalar(p.tenant_id, sql)  # noqa: E731
     try:
-        result = get_backend().build_fact_sales(p.tenant_id, d.table_name, body.mapping)
+        if body.role == "fact_sales":
+            result = get_backend().build_fact_sales(p.tenant_id, d.table_name, body.mapping)
+            checks = quality.model_checks(result, body.mapping, scalar)
+        else:
+            result = get_backend().build_dimension(p.tenant_id, d.table_name, body.role, body.mapping)
+            checks = quality.dimension_checks(result)
     except ValueError as e:
         raise HTTPException(422, str(e))
     d.model_status, d.column_mapping = "approved", body.mapping
-    d.profile = {**d.profile, "model_result": result}
-    quality.store_results(db, p.tenant_id, d.id, "model", quality.model_checks(
-        result, body.mapping, lambda sql: get_backend().scalar(p.tenant_id, sql)))
-    audit(db, p, "dataset.approved", dataset_id=d.id, **result)
+    d.profile = {**d.profile, "model_result": result, "role": body.role}
+    quality.store_results(db, p.tenant_id, d.id, "model", checks)
+    db.flush()  # autoflush is off: make this approval visible to the relationship check
+    _refresh_relationships(db, p)
+    audit(db, p, "dataset.approved", dataset_id=d.id, **{**result, "role": body.role})
     db.commit()
     return result
+
+
+def _approved_dimensions(db: Session, tenant_id: str) -> dict[str, m.Dataset]:
+    out = {}
+    for d in db.scalars(select(m.Dataset).where(m.Dataset.tenant_id == tenant_id,
+                                                 m.Dataset.model_status == "approved")
+                        .order_by(m.Dataset.created_at)):
+        role = d.profile.get("role")
+        if role in DIMS:
+            out[role] = d  # latest approved dataset per role wins
+    return out
+
+
+def _refresh_relationships(db: Session, p: Principal) -> None:
+    """Re-check how well sales join to each approved dimension (runs after any approval, either order)."""
+    for role, d in _approved_dimensions(db, p.tenant_id).items():
+        stats = quality.relationship_stats(lambda sql: get_backend().scalar(p.tenant_id, sql), role)
+        if stats:
+            quality.store_results(db, p.tenant_id, d.id, "relationship", [quality.relationship_result(stats)])
+
+
+@app.get("/api/v1/relationships")
+def relationships(p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+    """Joins between sales and approved dimension tables, with live key coverage."""
+    out = []
+    for role, d in _approved_dimensions(db, p.tenant_id).items():
+        stats = quality.relationship_stats(lambda sql: get_backend().scalar(p.tenant_id, sql), role)
+        out.append({"dataset_id": d.id, "dataset": d.name, "role": role, "sales_modelled": stats is not None,
+                    **(stats or {})})
+    return {"relationships": out}
 
 
 @app.get("/api/v1/metrics")
@@ -198,10 +237,12 @@ def _run_plan(db: Session, p: Principal, plan, today: date | None = None) -> dic
     if metric is None:
         raise QueryRejected("Metric is not approved")
     for dim in plan.dimensions:
-        if dim not in metric.dimensions:
+        if dim not in metric.dimensions and dim not in ATTR_TO_ROLE:  # dimension-table attributes apply to every metric
             raise QueryRejected(f"Dimension not allowed for metric: {dim}")
     backend = get_backend()
-    sql, params = compile_plan(plan, metric.expression, metric.aggregation, today, backend.month_expr("order_date"))
+    needs_dims = any(a in plan.dimensions or any(f.field == a for f in plan.filters) for a in ATTR_TO_ROLE)
+    sql, params = compile_plan(plan, metric.expression, metric.aggregation, today, backend.month_expr("order_date"),
+                               backend.tables(p.tenant_id) if needs_dims else None)
     cols, rows = execute_readonly(p.tenant_id, sql, params)
     caveats = ["Associations shown here do not establish causation."]
     fresh = backend.scalar(p.tenant_id, "SELECT max(order_date) FROM fact_sales")

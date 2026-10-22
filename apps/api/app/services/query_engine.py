@@ -12,16 +12,22 @@ from sqlglot import exp
 
 from ..config import get_settings
 from .backends import get_backend
+from .dimensions import ATTR_TO_ROLE, DIMS
 
 DIM_SQL = {
     "month": "{MONTH}",  # engine-specific, filled in by compile_plan
     "product": "product",
     "region": "region",
     "customer": "customer",
+    # Attributes from dimension tables; sales without a matching dimension row are kept as 'Unassigned'.
+    "category": "COALESCE(p.category, 'Unassigned')",
+    "segment": "COALESCE(c.segment, 'Unassigned')",
 }
+FILTER_SQL = {"product": "product", "region": "region", "customer": "customer",
+              "category": "p.category", "segment": "c.segment"}
 AGG_SQL = {"sum": "SUM({e})", "count_distinct": "COUNT(DISTINCT {e})", "avg": "AVG({e})"}
-ALLOWED_TABLES = {"fact_sales"}
-ALLOWED_FUNCS = {"SUM", "COUNT", "AVG", "STRFTIME"}
+ALLOWED_TABLES = {"fact_sales", "dim_product", "dim_customer"}
+ALLOWED_FUNCS = {"SUM", "COUNT", "AVG", "STRFTIME", "COALESCE"}
 
 
 class QueryRejected(ValueError):
@@ -34,14 +40,14 @@ class TimeRange(BaseModel):
 
 
 class Filter(BaseModel):
-    field: Literal["product", "region", "customer"]
+    field: Literal["product", "region", "customer", "category", "segment"]
     value: str = Field(max_length=200)
 
 
 class Plan(BaseModel):
     intent: Literal["metric_total", "compare_metric_over_time", "metric_breakdown"]
     metric: str
-    dimensions: list[Literal["month", "product", "region", "customer"]] = Field(default_factory=list, max_length=2)
+    dimensions: list[Literal["month", "product", "region", "customer", "category", "segment"]] = Field(default_factory=list, max_length=2)
     time_range: TimeRange = TimeRange()
     filters: list[Filter] = Field(default_factory=list, max_length=5)
     visualization: Literal["number", "line_chart", "bar_chart", "table"] = "table"
@@ -55,9 +61,21 @@ class Plan(BaseModel):
         return v
 
 
+def _roles_needed(plan: Plan) -> list[str]:
+    names = list(plan.dimensions) + [f.field for f in plan.filters]
+    return [r for a, r in ATTR_TO_ROLE.items() if a in names]
+
+
 def compile_plan(plan: Plan, expression: str, aggregation: str, today: date | None = None,
-                 month_expr: str | None = None):
+                 month_expr: str | None = None, available_tables: set[str] | None = None):
     """Build SQL from a template; user-controlled values are bound parameters only."""
+    roles = _roles_needed(plan)
+    if available_tables is not None:
+        for r in roles:
+            if DIMS[r]["table"] not in available_tables:
+                label = DIMS[r]["label"].lower()
+                raise QueryRejected(f"No approved {label} data yet. Upload a {label} file under Data Sources "
+                                    f"and approve it as the {label} dimension to use {DIMS[r]['attr_col']}.")
     today = today or date.today()
     agg = AGG_SQL[aggregation].format(e=expression)  # expression was validated at registration
     month = month_expr or "strftime(order_date, '%Y-%m')"
@@ -72,9 +90,11 @@ def compile_plan(plan: Plan, expression: str, aggregation: str, today: date | No
         where += ["order_date >= ?", "order_date < ?"]
         params += [date(y, m, 1).isoformat(), first_this.isoformat()]
     for f in plan.filters:
-        where.append(f"{f.field} = ?")
+        where.append(f"{FILTER_SQL[f.field]} = ?")
         params.append(f.value)
-    sql = f"SELECT {', '.join(dims + [agg + ' AS value'])} FROM fact_sales"
+    joins = "".join(f" LEFT JOIN {DIMS[r]['table']} {DIMS[r]['alias']} "
+                    f"ON f.{DIMS[r]['fact_col']} = {DIMS[r]['alias']}.{DIMS[r]['key_col']}" for r in roles)
+    sql = f"SELECT {', '.join(dims + [agg + ' AS value'])} FROM fact_sales f{joins}"
     if where:
         sql += " WHERE " + " AND ".join(where)
     if plan.dimensions:
@@ -103,7 +123,14 @@ def validate_select(sql: str, dialect: str = "duckdb") -> None:
     for t in tree.find_all(exp.Table):
         if t.name.lower() not in ALLOWED_TABLES or t.args.get("db"):
             raise QueryRejected(f"Table not allowed: {t.name}")
-    allowed_nodes = (exp.Sum, exp.Count, exp.Avg, exp.Distinct, exp.TimeToStr, exp.Cast,
+    joins = list(tree.find_all(exp.Join))
+    if len(joins) > len(ALLOWED_TABLES) - 1:
+        raise QueryRejected("Too many joins")
+    for j in joins:  # only LEFT JOIN ... ON <equality> to an allowlisted dimension table
+        if (j.side or "").upper() != "LEFT" or j.args.get("kind") or j.args.get("using") \
+                or not isinstance(j.args.get("on"), exp.EQ):
+            raise QueryRejected("Only LEFT JOIN on a key equality is allowed")
+    allowed_nodes = (exp.Sum, exp.Count, exp.Avg, exp.Distinct, exp.TimeToStr, exp.Cast, exp.Coalesce,
                      exp.TryCast, exp.TimeStrToTime, exp.Paren, exp.Binary, exp.Unary)
     for fn in tree.find_all(exp.Func):
         if isinstance(fn, (exp.Column, exp.Literal)):
