@@ -40,6 +40,18 @@ class User(Base):
     mfa_last_step: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
+class UserIdentity(Base):
+    """Links a DataPilot user to an identity at an OIDC provider. Matching is by (issuer, subject), never by e-mail
+    after the first link, so a changed or spoofed e-mail claim cannot take over an account."""
+    __tablename__ = "user_identities"
+    __table_args__ = (UniqueConstraint("issuer", "subject"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    issuer: Mapped[str] = mapped_column(String(300))
+    subject: Mapped[str] = mapped_column(String(300))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class TenantMembership(Base):
     __tablename__ = "tenant_memberships"
     __table_args__ = (UniqueConstraint("tenant_id", "user_id"),)

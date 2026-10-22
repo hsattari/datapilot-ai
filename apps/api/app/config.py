@@ -16,6 +16,12 @@ class Settings(BaseSettings):
     jwt_secret: str = "change-me-in-production"
     mfa_encryption_key: str = ""   # separate key for MFA secrets at rest (falls back to jwt_secret; use Key Vault in production)
     login_max_failures: int = 5
+    # OIDC single sign-on (e.g. Microsoft Entra ID). The browser (MSAL, auth-code + PKCE) obtains an ID token and
+    # the API verifies it. Issuer for Entra: https://login.microsoftonline.com/<tenant-id>/v2.0
+    oidc_issuer: str = ""
+    oidc_client_id: str = ""
+    oidc_jwks_uri: str = ""        # optional; discovered from the issuer when empty
+    oidc_required_tid: str = ""    # optional Entra tenant id the token must come from
     login_lockout_minutes: int = 15
 
     # Rate limits (requests per minute; 0 = off). In-process: also enforce at the gateway in production.

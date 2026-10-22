@@ -13,7 +13,7 @@ from ..db import get_db
 from ..deps import Principal, get_principal, require_admin
 from ..schemas import LoginIn
 from ..security import create_token, hash_password, verify_password
-from ..services import ratelimit, totp
+from ..services import oidc, ratelimit, totp
 from ..services.common import audit
 
 router = APIRouter(prefix="/api/v1")
@@ -218,3 +218,54 @@ def update_user(user_id: str, body: UserPatch, p: Principal = Depends(require_ad
     audit(db, p, "user.updated", user_id=user_id, role=new_role, active=new_active)
     db.commit()
     return _user_json(u, mem.role)
+
+
+# ---------------------------------------------------------------- OIDC single sign-on
+class OIDCExchangeIn(BaseModel):
+    id_token: str = Field(min_length=20, max_length=8000)
+    nonce: str | None = Field(default=None, max_length=200)
+
+
+@router.get("/auth/oidc/config")
+def oidc_config():
+    """Public, non-secret settings the browser needs to start sign-in (e.g. MSAL authority and client id)."""
+    s = get_settings()
+    return {"enabled": oidc.enabled(), "issuer": s.oidc_issuer if oidc.enabled() else None,
+            "client_id": s.oidc_client_id if oidc.enabled() else None}
+
+
+@router.post("/auth/oidc/exchange", dependencies=[AUTH_LIMIT])
+def oidc_exchange(body: OIDCExchangeIn, db: Session = Depends(get_db)):
+    """Swap a verified ID token for a DataPilot access token.
+
+    Only people an administrator has already added can sign in (no automatic account creation). The first sign-in
+    links the provider identity to the account by e-mail; after that the account is matched by (issuer, subject) only.
+    MFA is the identity provider's job on this path.
+    """
+    s = get_settings()
+    if not oidc.enabled():
+        raise HTTPException(404, "Single sign-on is not configured")
+    try:
+        claims = oidc.verify_id_token(body.id_token, body.nonce)
+    except oidc.OIDCError:
+        raise HTTPException(401, "Invalid token")
+    issuer, subject = s.oidc_issuer, claims["sub"]
+    ident = db.scalar(select(m.UserIdentity).where(m.UserIdentity.issuer == issuer, m.UserIdentity.subject == subject))
+    if ident is not None:
+        user = db.get(m.User, ident.user_id)
+    else:
+        email = str(claims.get("email") or claims.get("preferred_username") or "").lower()
+        if not email or claims.get("email_verified") is False:
+            raise HTTPException(403, "The identity provider did not supply a verified e-mail address")
+        user = db.scalar(select(m.User).where(m.User.email == email))
+        if user is None or db.scalar(select(m.UserIdentity).where(m.UserIdentity.user_id == user.id,
+                                                                  m.UserIdentity.issuer == issuer)):
+            # unknown person, or this account is already linked to a DIFFERENT identity: never re-link by e-mail
+            raise HTTPException(403, "This account is not set up for single sign-on. Ask an administrator to add you.")
+        db.add(m.UserIdentity(user_id=user.id, issuer=issuer, subject=subject))
+        _audit_user(db, user.id, "auth.sso_linked", issuer=issuer)
+    if user is None or user.disabled:
+        raise HTTPException(401, "Invalid token")
+    _audit_user(db, user.id, "auth.sso_login")
+    db.commit()
+    return {"token": create_token(user.id)}

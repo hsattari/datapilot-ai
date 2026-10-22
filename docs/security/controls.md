@@ -1,6 +1,6 @@
 # Security controls: implemented, tested, and outstanding
 
-## Implemented and tested (automated tests; 118 pass on PostgreSQL)
+## Implemented and tested (automated tests; 136 pass on PostgreSQL)
 - Tenant isolation: tenant resolved server-side from membership; cross-tenant IDs return 404; per-tenant analytical store.
 - Sign-in: bcrypt hashing (72-byte limit enforced), generic "Invalid credentials" for unknown email and wrong password
   (equal timing via a dummy hash), **lockout** after 5 failures for 15 minutes (also refuses a correct password
@@ -18,6 +18,9 @@
 - Uploads: extension/signature/size/binary checks, macro rejection, filename sanitising, path-traversal guard, immutable
   raw objects. Queries: structured plan -> template SQL with bound parameters -> sqlglot validator (single SELECT,
   allowlisted tables/functions, LEFT JOIN on key equality only) -> read-only per-tenant connection with timeout.
+- **OIDC/Entra token exchange (API only):** strict RS256 verification, key caching/rotation, nonce, tenant id, provisioned
+  users only, subject-based matching, no e-mail re-linking; tested with a fake identity provider incl. alg=none and
+  HMAC-key-confusion attacks. See `oidc-entra.md`.
 - Audit events for sign-in, user changes, approvals, queries, reports, alerts and settings (admins can read them).
 
 ## Known limits of what is built (be aware, not hidden)
@@ -26,9 +29,9 @@
 - Access tokens last 30 minutes and are not revoked on password change; deactivation IS immediate (checked per request).
 - Initial passwords for added users are set by an admin, not by an e-mailed invitation (no e-mail service yet).
 - MFA is optional per user; it is not yet enforced by tenant policy.
-- Not tested against a real identity provider: OIDC/Entra sign-in is not built yet.
+- OIDC/Entra is **not tested against a real identity provider** and the web app has no Microsoft sign-in button yet.
 
 ## Outstanding before launch
-OIDC/Entra sign-in and tenant-level MFA policy, malware scanning of uploads, parser sandboxing/egress limits,
+Real-IdP test of OIDC/Entra and a Microsoft sign-in button, tenant-level MFA policy, e-mailed invitations, malware scanning of uploads, parser sandboxing/egress limits,
 field-level restrictions, secrets in Key Vault, TLS termination, key-management review, retention/deletion workflows,
 DPIA and legal review (UK GDPR / DPA 2018), independent penetration test and adversarial tenant-isolation testing.
