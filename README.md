@@ -24,7 +24,8 @@ proposal (v1.0, 10 Oct 2026).
 | Products/customers dimensions with joins (`approve` with `role`, `GET /relationships`, "by category / by segment" questions) | **Tested on SQLite, real PostgreSQL, dbt and in the browser.** Joins are `LEFT JOIN` on unique keys (duplicates quarantined), unmatched sales show as "Unassigned" and totals always reconcile. Databricks version is mock-tested only; inventory template not built |
 | dbt Core retail template | **`dbt build` verified** (dbt 1.12 + DuckDB: 8/8 pass, gross profit 140, bad row quarantined, duplicate fails the unique test) via `dbt/check_template.py`, also in CI. Other warehouses (Databricks/Fabric) not tested |
 | CI workflow | **Running on GitHub, all 4 jobs green** (api, web, PostgreSQL+pgvector, dbt) |
-| Docker Compose, Terraform | **Written, not executed** (no Docker daemon / Terraform in the build sandbox) |
+| Observability: request IDs, structured JSON logs, OpenTelemetry spans (requests, queries, ingestion) exported to Application Insights when configured | **Tested locally** with an in-memory exporter, including privacy tests (no question text, e-mail, tokens, file names or query strings in logs/spans). **Not tested against a real Application Insights resource** |
+| Docker Compose, Terraform | **Written, not run.** Terraform: a syntax error in the first version was found and fixed; the file now parses and formats cleanly under OpenTofu, but provider validation/plan/apply could not run in the sandbox. Docker Compose: no Docker daemon available |
 | MCP server (`apps/mcp`): 6 read-only tools over the REST API (tenant scoping/validation reused; no write, raw-SQL or tenant tools) | **Complete**; tested in-process and via a real stdio handshake. Not tested with a specific client app |
 | Analytics backend abstraction + **Databricks SQL / Unity Catalog adapter** (schema per tenant, read-only token for queries, named-parameter binding, PySpark ingest template) | **Written, mock-tested only — UNTESTED against a real workspace.** See `connectors/databricks/README.md` |
 | **Power BI semantic model export** (`GET /api/v1/export/powerbi`: TMSL + DAX from approved metrics, SQL-equivalent NULL handling) | **Verified in Power BI Desktop by the project owner:** Net Revenue 350, Orders 3, Gross Profit 140 from the generated DAX on the reference data (`scripts/demo_setup.py` produces the files). The partition is still a template you bind to your source; dimension tables are not exported yet. See `docs/architecture/fabric-powerbi.md` |
@@ -83,6 +84,6 @@ header, upload validation, quarantine, unsafe SQL/prompt-injection refusals, and
 
 - Only one sales dataset feeds `fact_sales` (latest approved replaces the previous one); multi-table joins
   (products, customers, inventory) are next.
-- Single tenant per user; JWT only (add OIDC/MFA). No rate limiting, malware scanning, or export endpoint yet.
+- Single tenant per user. Malware scanning of uploads and a data export/deletion workflow are not built yet; OIDC/Entra is untested against a real identity provider.
 - Rule-based planner is keyword-based and intentionally conservative.
 - Logs store question text and generated SQL in `analytical_queries`; set retention before launch and complete a DPIA.

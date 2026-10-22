@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
+from ..observability import tracer
 from ..models import AuditEvent, Dataset, IngestionJob, SourceFile
 from .backends import get_backend
 from .quality import profile_checks, record_schema_version, store_results
@@ -18,6 +19,20 @@ MAX_ATTEMPTS = 3
 
 
 def process_job(db: Session, job_id: str) -> IngestionJob:
+    with tracer.start_as_current_span("ingestion.job", record_exception=False, set_status_on_exception=False) as span:
+        job = _process_job(db, job_id)
+        if job is not None:
+            span.set_attribute("dp.job_id", job.id)
+            span.set_attribute("dp.tenant_id", job.tenant_id)
+            span.set_attribute("dp.status", job.status)
+            span.set_attribute("dp.attempts", job.attempts)
+            span.set_attribute("dp.rows_loaded", job.rows_loaded or 0)
+            if job.error_category:
+                span.set_attribute("error.category", job.error_category)
+        return job
+
+
+def _process_job(db: Session, job_id: str) -> IngestionJob:
     job = db.get(IngestionJob, job_id)
     if job is None or job.status not in ("queued", "retrying"):
         return job

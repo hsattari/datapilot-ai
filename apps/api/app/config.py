@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     jwt_secret: str = "change-me-in-production"
     mfa_encryption_key: str = ""   # separate key for MFA secrets at rest (falls back to jwt_secret; use Key Vault in production)
     login_max_failures: int = 5
+    # Observability: JSON logs by default; traces go to Application Insights when a connection string is set
+    log_format: str = "json"                 # "json" or "text" (text is easier to read while developing)
+    applicationinsights_connection_string: str = ""
+    otel_console: bool = False               # print spans to the console (debugging)
     # OIDC single sign-on (e.g. Microsoft Entra ID). The browser (MSAL, auth-code + PKCE) obtains an ID token and
     # the API verifies it. Issuer for Entra: https://login.microsoftonline.com/<tenant-id>/v2.0
     oidc_issuer: str = ""

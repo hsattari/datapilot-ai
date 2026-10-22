@@ -12,6 +12,7 @@ from .deps import Principal, get_principal, require_admin, require_writer
 from .routers.knowledge import router as knowledge_router
 from .routers.auth import router as auth_router
 from .routers.workspace import router as workspace_router
+from . import observability
 from .services import ratelimit
 from .schemas import ApproveIn, QuestionIn, RegisterIn, SourceIn
 from .security import create_token, hash_password
@@ -54,6 +55,7 @@ async def security_headers(request, call_next):
     return resp
 
 
+observability.install(app)
 app.include_router(auth_router)
 app.include_router(knowledge_router)
 app.include_router(workspace_router)

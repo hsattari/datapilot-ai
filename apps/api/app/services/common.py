@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from .. import models as m
 from ..deps import Principal
+from ..observability import span_error, tracer
 from .backends import get_backend
 from .dimensions import ATTR_TO_ROLE
 from .query_engine import QueryRejected, compile_plan, execute_readonly
@@ -26,6 +27,20 @@ def owned(db: Session, model, obj_id: str, tenant_id: str):
 
 
 def run_plan(db: Session, p: Principal, plan, today: date | None = None) -> dict:
+    with tracer.start_as_current_span("analytics.run_plan", record_exception=False, set_status_on_exception=False) as span:
+        span.set_attribute("dp.tenant_id", p.tenant_id)
+        span.set_attribute("dp.metric", str(plan.metric))
+        span.set_attribute("dp.dimensions", ",".join(plan.dimensions))
+        try:
+            out = _run_plan(db, p, plan, today)
+        except Exception as e:  # type only: the message may quote data
+            span_error(span, e)
+            raise
+        span.set_attribute("dp.rows", len(out["rows"]))
+        return out
+
+
+def _run_plan(db: Session, p: Principal, plan, today: date | None = None) -> dict:
     metric = db.scalar(select(m.Metric).where(m.Metric.tenant_id == p.tenant_id,
                                               m.Metric.name == plan.metric,
                                               m.Metric.status == "approved"))

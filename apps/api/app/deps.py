@@ -11,6 +11,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from . import observability
 from .db import get_db
 from .models import TenantMembership, User
 from .security import decode_token
@@ -43,6 +44,7 @@ def get_principal(
     m = db.scalar(select(TenantMembership).where(TenantMembership.user_id == user_id))
     if m is None:
         raise HTTPException(403, "No tenant membership")
+    observability.bind(tenant_id=m.tenant_id, user_id=user_id)
     return Principal(user_id=user_id, tenant_id=m.tenant_id, role=m.role)
 
 
