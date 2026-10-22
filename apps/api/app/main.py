@@ -10,31 +10,21 @@ from .config import get_settings
 from .db import Base, engine, get_db
 from .deps import Principal, get_principal, require_admin, require_writer
 from .routers.knowledge import router as knowledge_router
+from .routers.workspace import router as workspace_router
 from .schemas import ApproveIn, LoginIn, QuestionIn, RegisterIn, SourceIn
 from .security import create_token, hash_password, verify_password
 from .services.backends import get_backend
-from .services.dimensions import ATTR_TO_ROLE, DIMS, mapping_columns
+from .services.common import audit, owned, run_plan
+from .services.dimensions import DIMS, mapping_columns
 from .services import quality, semantic
 from .services.planner import make_plan
-from .services.query_engine import QueryRejected, compile_plan, execute_readonly
+from .services.query_engine import QueryRejected
 from .services.storage import get_storage, safe_filename
 from .services.validation import UploadRejected, validate_upload
 
 app = FastAPI(title="DataPilot AI API", version="0.1.0")
 app.include_router(knowledge_router)
-
-
-def audit(db: Session, p: Principal | None, action: str, **detail) -> None:
-    db.add(m.AuditEvent(tenant_id=p.tenant_id if p else None, user_id=p.user_id if p else None,
-                        action=action, detail=detail))
-
-
-def owned(db: Session, model, obj_id: str, tenant_id: str):
-    """Fetch an object only if it belongs to the caller's tenant; 404 otherwise (no existence leak)."""
-    obj = db.get(model, obj_id)
-    if obj is None or obj.tenant_id != tenant_id:
-        raise HTTPException(404, "Not found")
-    return obj
+app.include_router(workspace_router)
 
 
 @app.get("/healthz")
@@ -230,32 +220,6 @@ def approve_metric(name: str, p: Principal = Depends(require_admin), db: Session
     return {"name": metric.name, "status": metric.status}
 
 
-def _run_plan(db: Session, p: Principal, plan, today: date | None = None) -> dict:
-    metric = db.scalar(select(m.Metric).where(m.Metric.tenant_id == p.tenant_id,
-                                              m.Metric.name == plan.metric,
-                                              m.Metric.status == "approved"))
-    if metric is None:
-        raise QueryRejected("Metric is not approved")
-    for dim in plan.dimensions:
-        if dim not in metric.dimensions and dim not in ATTR_TO_ROLE:  # dimension-table attributes apply to every metric
-            raise QueryRejected(f"Dimension not allowed for metric: {dim}")
-    backend = get_backend()
-    needs_dims = any(a in plan.dimensions or any(f.field == a for f in plan.filters) for a in ATTR_TO_ROLE)
-    sql, params = compile_plan(plan, metric.expression, metric.aggregation, today, backend.month_expr("order_date"),
-                               backend.tables(p.tenant_id) if needs_dims else None)
-    cols, rows = execute_readonly(p.tenant_id, sql, params)
-    caveats = ["Associations shown here do not establish causation."]
-    fresh = backend.scalar(p.tenant_id, "SELECT max(order_date) FROM fact_sales")
-    missing_cost = backend.scalar(p.tenant_id, "SELECT count(*) FROM fact_sales WHERE cost_of_goods_sold IS NULL")
-    if "cost_of_goods_sold" in metric.expression and missing_cost:
-        caveats.append(f"{missing_cost} order rows have no cost data; profit is incomplete for them.")
-    return {"columns": cols, "rows": rows, "sql": sql,
-            "metric": {"name": metric.name, "label": metric.label, "definition": metric.description,
-                       "expression": metric.expression, "version": metric.version},
-            "freshness": {"latest_order_date": str(fresh) if fresh else None},
-            "caveats": caveats}
-
-
 @app.post("/api/v1/analytics/query")
 def analytics_query(body: QuestionIn, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     approved = {x.name: x.description for x in db.scalars(select(m.Metric).where(
@@ -268,7 +232,7 @@ def analytics_query(body: QuestionIn, p: Principal = Depends(get_principal), db:
         db.commit()
         return {"outcome": res.outcome, "message": res.message}
     try:
-        out = _run_plan(db, p, res.plan)
+        out = run_plan(db, p, res.plan)
     except QueryRejected as e:
         audit(db, p, "query.rejected", reason=str(e))
         db.commit()
@@ -291,8 +255,8 @@ def dashboard(p: Principal = Depends(get_principal), db: Session = Depends(get_d
     for x in db.scalars(select(m.Metric).where(m.Metric.tenant_id == p.tenant_id,
                                                m.Metric.status == "approved")):
         try:
-            total = _run_plan(db, p, Plan(intent="metric_total", metric=x.name, visualization="number"))
-            trend = _run_plan(db, p, Plan(intent="compare_metric_over_time", metric=x.name,
+            total = run_plan(db, p, Plan(intent="metric_total", metric=x.name, visualization="number"))
+            trend = run_plan(db, p, Plan(intent="compare_metric_over_time", metric=x.name,
                                           dimensions=["month"], visualization="line_chart"))
         except Exception:
             continue

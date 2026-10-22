@@ -2,7 +2,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -180,4 +180,32 @@ class QualityResult(Base):
     status: Mapped[str] = mapped_column(String(10))              # pass | warn | fail
     message: Mapped[str] = mapped_column(Text, default="")
     observed: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class Report(Base):
+    """A saved question: the validated plan is stored and re-run through the governed engine each time."""
+    __tablename__ = "reports"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    title: Mapped[str] = mapped_column(String(200))
+    question: Mapped[str] = mapped_column(Text)
+    plan: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_by: Mapped[str] = mapped_column(String(36))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class Alert(Base):
+    """Threshold rule on an approved metric total, evaluated on demand (scheduling comes with the worker queue)."""
+    __tablename__ = "alerts"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    metric: Mapped[str] = mapped_column(String(100))
+    comparison: Mapped[str] = mapped_column(String(10))  # above | below
+    threshold: Mapped[float] = mapped_column(Float)
+    last_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_state: Mapped[str | None] = mapped_column(String(20), nullable=True)  # ok | triggered | error
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[str] = mapped_column(String(36))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

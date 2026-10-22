@@ -8,7 +8,9 @@ button{background:#2563eb;color:#fff;border:0;border-radius:6px;padding:8px 14px
 button:hover:not(:disabled){background:#1d4ed8}
 button:disabled{background:#dbe4f7;color:#35507f;cursor:default}
 input:not([type=file]){display:block;width:100%;box-sizing:border-box;margin:0 0 10px;padding:9px 10px;border:1px solid #cfd6e2;border-radius:6px;font:inherit}
-nav button{margin-right:8px}
+nav button{margin:0 8px 8px 0}
+select{padding:9px 10px;border:1px solid #cfd6e2;border-radius:6px;font:inherit;margin-bottom:10px}
+label{display:block;font-size:14px;color:#5b6575;margin-bottom:4px}
 code,pre{background:#f1f3f7;border-radius:4px;padding:2px 5px}
 a{color:#2563eb}
 `;

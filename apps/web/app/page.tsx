@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, setToken } from "./api";
 
-type Tab = "home" | "sources" | "metrics" | "ask";
+type Tab = "home" | "sources" | "metrics" | "ask" | "reports" | "alerts" | "activity" | "settings";
 const card = { background: "#fff", borderRadius: 8, padding: 16, boxShadow: "0 1px 3px #0001", marginBottom: 16 } as const;
 
 function Auth({ onAuthed }: { onAuthed: () => void }) {
@@ -155,7 +155,13 @@ function Metrics() {
 function Ask() {
   const [q, setQ] = useState("");
   const [a, setA] = useState<any>(null);
-  const go = async () => setA(await api("/analytics/query", { method: "POST", body: JSON.stringify({ question: q }) }).catch(e => ({ outcome: "error", message: e.message })));
+  const [saved, setSaved] = useState("");
+  const save = async () => {
+    try { await api("/reports", { method: "POST", body: JSON.stringify({ title: q.slice(0, 120), question: q }) }); setSaved("Saved under Reports."); }
+    catch (e: any) { setSaved(e.message); }
+  };
+  const go = async () => { setSaved(""); await ask(); };
+  const ask = async () => setA(await api("/analytics/query", { method: "POST", body: JSON.stringify({ question: q }) }).catch(e => ({ outcome: "error", message: e.message })));
   return (<>
     <div style={card}><input style={{ width: "70%" }} placeholder="e.g. Why has gross profit changed over the last 3 months? Or: net revenue by category" value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => e.key === "Enter" && go()} /> <button onClick={go}>Ask</button></div>
     {a && <div style={card}>
@@ -166,9 +172,126 @@ function Ask() {
           <p><b>{a.metric.label}</b>: {a.metric.definition} (<code>{a.metric.expression}</code>, v{a.metric.version})</p>
           <p>Data up to {a.freshness.latest_order_date}</p><pre>{a.sql}</pre></details>
         {a.caveats.map((c: string) => <p key={c}><small>{c}</small></p>)}
+        <p><button onClick={save}>Save as report</button> <small role="status">{saved}</small></p>
       </>}
     </div>}
   </>);
+}
+
+function ResultTable({ a }: { a: any }) {
+  if (a.outcome !== "answered") return <p>{a.message}</p>;
+  return <>
+    <table><thead><tr>{a.columns.map((c: string) => <th key={c}>{c}</th>)}</tr></thead>
+      <tbody>{a.rows.map((r: any[], i: number) => <tr key={i}>{r.map((v, j) => <td key={j}>{String(v)}</td>)}</tr>)}</tbody></table>
+    <small>{a.metric.label} v{a.metric.version} — data up to {a.freshness.latest_order_date}</small>
+    {a.caveats.map((c: string) => <div key={c}><small>{c}</small></div>)}
+  </>;
+}
+
+function Reports() {
+  const [rows, setRows] = useState<any[]>([]);
+  const [result, setResult] = useState<any>(null);
+  const [msg, setMsg] = useState("");
+  const refresh = useCallback(() => api("/reports").then(setRows), []);
+  useEffect(() => { refresh().catch(e => setMsg(e.message)); }, [refresh]);
+  const run = async (id: string) => setResult(await api(`/reports/${id}/run`).catch(e => ({ outcome: "error", message: e.message })));
+  const del = async (id: string) => { try { await api(`/reports/${id}`, { method: "DELETE" }); setResult(null); await refresh(); } catch (e: any) { setMsg(e.message); } };
+  return (<>
+    <div style={card}>
+      <p style={{ marginTop: 0 }}>Reports are saved questions. Each run uses the current approved metric definitions and data.</p>
+      {msg && <p role="alert">{msg}</p>}
+      {!rows.length && <p>No reports yet. Ask a question under Ask Your Data and choose Save as report.</p>}
+      <table><tbody>{rows.map(r => <tr key={r.id}><td><b>{r.title}</b><br /><small>{r.question}</small></td>
+        <td><button onClick={() => run(r.id)}>Run</button> <button onClick={() => del(r.id)}>Delete</button></td></tr>)}</tbody></table>
+    </div>
+    {result && <div style={card} data-testid="report-result"><h3 style={{ marginTop: 0 }}>{result.title}</h3><ResultTable a={result} /></div>}
+  </>);
+}
+
+function Alerts() {
+  const [rows, setRows] = useState<any[]>([]);
+  const [metrics, setMetrics] = useState<any[]>([]);
+  const [f, setF] = useState({ name: "", metric: "", comparison: "below", threshold: "" });
+  const [msg, setMsg] = useState("");
+  const refresh = useCallback(() => api("/alerts").then(setRows), []);
+  useEffect(() => {
+    let live = true;  // ignore responses that arrive after the screen was left or the effect re-ran
+    refresh().catch(e => setMsg(e.message));
+    api("/metrics").then(ms => {
+      if (!live) return;
+      const ok = ms.filter((x: any) => x.status === "approved");
+      setMetrics(ok);
+      setF(v => ({ ...v, metric: v.metric || ok[0]?.name || "" }));  // never overwrite a choice the user already made
+    }).catch(() => {});
+    return () => { live = false; };
+  }, [refresh]);
+  const create = async () => {
+    try { await api("/alerts", { method: "POST", body: JSON.stringify({ ...f, threshold: Number(f.threshold) }) }); setMsg("Alert created."); setF({ ...f, name: "", threshold: "" }); await refresh(); }
+    catch (e: any) { setMsg(e.message); }
+  };
+  const check = async () => { try { await api("/alerts/evaluate", { method: "POST" }); await refresh(); setMsg("Checked."); } catch (e: any) { setMsg(e.message); } };
+  const del = async (id: string) => { try { await api(`/alerts/${id}`, { method: "DELETE" }); await refresh(); } catch (e: any) { setMsg(e.message); } };
+  return (<>
+    <div style={card}>
+      <h3 style={{ marginTop: 0 }}>New alert</h3>
+      <input placeholder="Name, e.g. Profit below target" value={f.name} onChange={e => setF({ ...f, name: e.target.value })} />
+      <select value={f.metric} disabled={!metrics.length} onChange={e => setF(v => ({ ...v, metric: e.target.value }))} style={{ marginRight: 8 }}>{metrics.map(m => <option key={m.name} value={m.name}>{m.label}</option>)}</select>
+      <select value={f.comparison} onChange={e => setF(v => ({ ...v, comparison: e.target.value }))} style={{ marginRight: 8 }}><option value="below">is below</option><option value="above">is above</option></select>
+      <input placeholder="Threshold" value={f.threshold} onChange={e => setF({ ...f, threshold: e.target.value })} />
+      <button onClick={create} disabled={!f.metric || !f.name || f.threshold === "" || Number.isNaN(Number(f.threshold))}>Create alert</button>
+      {msg && <p role="status">{msg}</p>}
+    </div>
+    <div style={card}>
+      <p style={{ marginTop: 0 }}><button onClick={check}>Check now</button> <small>Alerts are checked when you press this button; scheduled checks need the background worker.</small></p>
+      <table><thead><tr><th>Alert</th><th>Rule</th><th>Last value</th><th>State</th><th></th></tr></thead>
+        <tbody>{rows.map(a => <tr key={a.id} data-alert={a.name}><td>{a.name}</td><td>{a.metric} {a.comparison} {a.threshold}</td>
+          <td>{a.last_value ?? "–"}</td>
+          <td style={{ color: a.last_state === "triggered" ? "#b00020" : a.last_state === "error" ? "#8a5a00" : "#1a7f37" }}>{a.last_state ?? "not checked"}</td>
+          <td><button onClick={() => del(a.id)}>Delete</button></td></tr>)}</tbody></table>
+    </div></>);
+}
+
+function Activity() {
+  const [events, setEvents] = useState<any[]>([]);
+  const [jobs, setJobs] = useState<any[]>([]);
+  const [usage, setUsage] = useState<any>(null);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    api("/jobs").then(setJobs).catch(() => {});
+    api("/usage").then(setUsage).catch(() => {});
+    api("/activity").then(setEvents).catch(e => setErr(e.message));
+  }, []);
+  return (<>
+    {usage && <div style={card} data-testid="usage"><h3 style={{ marginTop: 0 }}>Usage</h3>
+      {usage.files} files, {usage.datasets} datasets, {usage.rows_loaded} rows loaded, {usage.reports} reports, {usage.alerts} alerts. Questions in the last 30 days: {usage.questions_last_30_days.answered} answered, {usage.questions_last_30_days.refusal} refused.</div>}
+    <div style={card}><h3 style={{ marginTop: 0 }}>Upload jobs</h3>
+      {!jobs.length ? <p>No uploads yet.</p> : <table><thead><tr><th>File</th><th>Status</th><th>Rows</th><th>When</th></tr></thead>
+        <tbody>{jobs.map(j => <tr key={j.id}><td>{j.filename}</td><td>{j.status}{j.error_message ? `: ${j.error_message}` : ""}</td><td>{j.rows_loaded}</td><td>{new Date(j.created_at).toLocaleString()}</td></tr>)}</tbody></table>}</div>
+    <div style={card}><h3 style={{ marginTop: 0 }}>Activity log</h3>
+      {err ? <p>{err}</p> : <table><thead><tr><th>When</th><th>Action</th><th>Detail</th></tr></thead>
+        <tbody>{events.map(e => <tr key={e.id}><td>{new Date(e.created_at).toLocaleString()}</td><td>{e.action}</td><td><small>{JSON.stringify(e.detail)}</small></td></tr>)}</tbody></table>}</div>
+  </>);
+}
+
+function Settings() {
+  const [f, setF] = useState({ name: "", currency: "", timezone: "" });
+  const [role, setRole] = useState("");
+  const [msg, setMsg] = useState("");
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    let live = true;
+    api("/settings").then(r => { if (!live) return; setF({ name: r.name, currency: r.currency, timezone: r.timezone }); setRole(r.your_role); setLoaded(true); })
+      .catch(e => live && setMsg(e.message));
+    return () => { live = false; };
+  }, []);
+  const save = async () => { try { await api("/settings", { method: "PATCH", body: JSON.stringify(f) }); setMsg("Saved."); } catch (e: any) { setMsg(e.message); } };
+  return (<div style={card}>
+    <p style={{ marginTop: 0 }}>Your role: <b>{role}</b>. Only administrators can change settings.</p>
+    <label>Organisation<input disabled={!loaded} value={f.name} onChange={e => setF(v => ({ ...v, name: e.target.value }))} /></label>
+    <label>Currency (3 letters, e.g. GBP)<input disabled={!loaded} value={f.currency} onChange={e => setF(v => ({ ...v, currency: e.target.value.toUpperCase() }))} /></label>
+    <label>Time zone (e.g. Europe/London)<input disabled={!loaded} value={f.timezone} onChange={e => setF(v => ({ ...v, timezone: e.target.value }))} /></label>
+    <button onClick={save} disabled={!loaded || role !== "admin"}>Save settings</button> {msg && <span role="status">{msg}</span>}
+  </div>);
 }
 
 export default function Page() {
@@ -178,9 +301,9 @@ export default function Page() {
   return (
     <main style={{ maxWidth: 900, margin: "0 auto", padding: 24 }}>
       <nav style={{ marginBottom: 16 }}>
-        {(["home", "sources", "metrics", "ask"] as Tab[]).map(t => <button key={t} onClick={() => setTab(t)} disabled={tab === t} style={{ marginRight: 8 }}>{{ home: "Home", sources: "Data Sources", metrics: "Business Metrics", ask: "Ask Your Data" }[t]}</button>)}
+        {(["home", "sources", "metrics", "ask", "reports", "alerts", "activity", "settings"] as Tab[]).map(t => <button key={t} onClick={() => setTab(t)} disabled={tab === t} style={{ marginRight: 8 }}>{{ home: "Home", sources: "Data Sources", metrics: "Business Metrics", ask: "Ask Your Data", reports: "Reports", alerts: "Alerts", activity: "Activity", settings: "Settings" }[t]}</button>)}
       </nav>
-      {tab === "home" ? <Home /> : tab === "sources" ? <Sources /> : tab === "metrics" ? <Metrics /> : <Ask />}
+      {tab === "home" ? <Home /> : tab === "sources" ? <Sources /> : tab === "metrics" ? <Metrics /> : tab === "reports" ? <Reports /> : tab === "alerts" ? <Alerts /> : tab === "activity" ? <Activity /> : tab === "settings" ? <Settings /> : <Ask />}
     </main>
   );
 }

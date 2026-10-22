@@ -7,7 +7,7 @@
     python scripts/e2e_ui_test.py [screenshot_dir]      (set CHROMIUM_PATH to use a specific browser binary)
 
 Registers a user, uploads the reference CSV, approves the model, checks the dashboard (350 / 140), asks for gross
-profit (140) and asks revenue by category after approving a products file, checks an unsafe question is refused. Gross profit is approved through the Business Metrics screen; the quality panel is checked.
+profit (140) and asks revenue by category after approving a products file, checks an unsafe question is refused, then saves/runs a report, triggers an alert, edits settings and checks the activity log. Gross profit is approved through the Business Metrics screen; the quality panel is checked.
 """
 import json, sys, urllib.request
 from playwright.sync_api import sync_playwright, expect
@@ -104,5 +104,45 @@ with sync_playwright() as p:
     page.get_by_role("button", name="Ask", exact=True).click()
     expect(page.get_by_text("read-only questions")).to_be_visible(timeout=10000)
     print("OK unsafe question refused in UI")
+
+    page.get_by_placeholder("e.g. Why has gross profit").fill("What is our gross profit?")
+    page.get_by_role("button", name="Ask", exact=True).click()
+    expect(page.get_by_text("How this was calculated")).to_be_visible(timeout=10000)
+    page.get_by_role("button", name="Save as report").click()
+    expect(page.get_by_text("Saved under Reports.")).to_be_visible(timeout=10000)
+    page.get_by_role("button", name="Reports").click()
+    expect(page.get_by_text("What is our gross profit?").first).to_be_visible(timeout=10000)
+    page.get_by_role("button", name="Run").click()
+    expect(page.get_by_test_id("report-result")).to_contain_text("140", timeout=10000)
+    print("OK question saved as a report and re-run (140)")
+
+    page.get_by_role("button", name="Alerts").click()
+    page.get_by_placeholder("Name, e.g. Profit below target").fill("Profit above 100")
+    page.locator("select").nth(0).select_option(label="Gross Profit")
+    page.locator("select").nth(1).select_option(label="is above")
+    page.get_by_placeholder("Threshold").fill("100")
+    page.get_by_role("button", name="Create alert").click()
+    expect(page.locator("tr[data-alert='Profit above 100']")).to_be_visible(timeout=10000)
+    page.get_by_role("button", name="Check now").click()
+    expect(page.locator("tr[data-alert='Profit above 100']")).to_contain_text("triggered", timeout=10000)
+    expect(page.locator("tr[data-alert='Profit above 100']")).to_contain_text("gross_profit above 100")  # the metric I picked
+    expect(page.locator("tr[data-alert='Profit above 100']")).to_contain_text("140")
+    page.screenshot(path=f"{S}/alerts.png")
+    print("OK alert created and triggered (gross profit 140 > 100)")
+
+    page.get_by_role("button", name="Settings").click()
+    expect(page.get_by_text("Your role:")).to_contain_text("admin", timeout=10000)
+    page.get_by_label("Currency").fill("EUR")
+    page.get_by_role("button", name="Save settings").click()
+    expect(page.get_by_text("Saved.")).to_be_visible(timeout=10000)
+    tok = api("POST", "/api/v1/auth/login", {"email": EMAIL, "password": PW})["token"]
+    stored = api("GET", "/api/v1/settings", token=tok)
+    assert stored["currency"] == "EUR", f"settings were not stored: {stored}"  # check the server, not the screen
+    page.get_by_role("button", name="Activity").click()
+    expect(page.get_by_test_id("usage")).to_contain_text("2 files", timeout=10000)
+    expect(page.get_by_text("alert.triggered").first).to_be_visible(timeout=10000)
+    expect(page.get_by_text("settings.updated").first).to_be_visible()
+    page.screenshot(path=f"{S}/activity.png")
+    print("OK settings saved; activity log, jobs and usage visible")
     b.close()
 print("JS errors:", errors or "none")
