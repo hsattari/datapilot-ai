@@ -10,9 +10,11 @@ from .config import get_settings
 from .db import Base, engine, get_db
 from .deps import Principal, get_principal, require_admin, require_writer
 from .routers.knowledge import router as knowledge_router
+from .routers.auth import router as auth_router
 from .routers.workspace import router as workspace_router
-from .schemas import ApproveIn, LoginIn, QuestionIn, RegisterIn, SourceIn
-from .security import create_token, hash_password, verify_password
+from .services import ratelimit
+from .schemas import ApproveIn, QuestionIn, RegisterIn, SourceIn
+from .security import create_token, hash_password
 from .services.backends import get_backend
 from .services.common import audit, owned, run_plan
 from .services.dimensions import DIMS, mapping_columns
@@ -22,7 +24,37 @@ from .services.query_engine import QueryRejected
 from .services.storage import get_storage, safe_filename
 from .services.validation import UploadRejected, validate_upload
 
-app = FastAPI(title="DataPilot AI API", version="0.1.0")
+def check_production_config() -> None:
+    """Fail fast rather than run a production deployment with development secrets."""
+    s = get_settings()
+    if s.environment.lower() == "production":
+        problems = []
+        if s.jwt_secret == "change-me-in-production" or len(s.jwt_secret) < 32:
+            problems.append("JWT_SECRET must be set to a random value of at least 32 characters")
+        if not s.mfa_encryption_key or len(s.mfa_encryption_key) < 32:
+            problems.append("MFA_ENCRYPTION_KEY must be set (32+ characters, separate from JWT_SECRET)")
+        if not s.rate_limit_enabled:
+            problems.append("RATE_LIMIT_ENABLED must stay on in production")
+        if problems:
+            raise RuntimeError("Unsafe production configuration: " + "; ".join(problems))
+
+
+app = FastAPI(title="DataPilot AI API", version="0.1.0", on_startup=[check_production_config])
+
+
+@app.middleware("http")
+async def security_headers(request, call_next):
+    resp = await call_next(request)
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    resp.headers.setdefault("Referrer-Policy", "no-referrer")
+    if request.url.path.startswith("/api/"):
+        resp.headers.setdefault("Cache-Control", "no-store")  # never cache tenant data
+        resp.headers.setdefault("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+    return resp
+
+
+app.include_router(auth_router)
 app.include_router(knowledge_router)
 app.include_router(workspace_router)
 
@@ -32,7 +64,7 @@ def healthz():
     return {"status": "ok"}
 
 
-@app.post("/api/v1/tenants", status_code=201)
+@app.post("/api/v1/tenants", status_code=201, dependencies=[ratelimit.by_ip("auth", "rate_auth_per_minute")])
 def register(body: RegisterIn, db: Session = Depends(get_db)):
     if db.scalar(select(m.User).where(m.User.email == body.email.lower())):
         raise HTTPException(409, "Email already registered")
@@ -47,14 +79,6 @@ def register(body: RegisterIn, db: Session = Depends(get_db)):
     return {"tenant_id": tenant.id, "token": create_token(user.id)}
 
 
-@app.post("/api/v1/auth/login")
-def login(body: LoginIn, db: Session = Depends(get_db)):
-    user = db.scalar(select(m.User).where(m.User.email == body.email.lower()))
-    if not user or not verify_password(body.password, user.password_hash):
-        raise HTTPException(401, "Invalid credentials")
-    return {"token": create_token(user.id)}
-
-
 @app.post("/api/v1/data-sources", status_code=201)
 def create_source(body: SourceIn, p: Principal = Depends(require_writer), db: Session = Depends(get_db)):
     s = m.DataSource(tenant_id=p.tenant_id, name=body.name)
@@ -64,7 +88,8 @@ def create_source(body: SourceIn, p: Principal = Depends(require_writer), db: Se
     return {"id": s.id, "name": s.name}
 
 
-@app.post("/api/v1/data-sources/{source_id}/uploads", status_code=202)
+@app.post("/api/v1/data-sources/{source_id}/uploads", status_code=202,
+          dependencies=[ratelimit.by_user("upload", "rate_upload_per_minute")])
 async def upload(source_id: str, file: UploadFile = File(...), p: Principal = Depends(require_writer),
                  db: Session = Depends(get_db)):
     owned(db, m.DataSource, source_id, p.tenant_id)
@@ -220,7 +245,7 @@ def approve_metric(name: str, p: Principal = Depends(require_admin), db: Session
     return {"name": metric.name, "status": metric.status}
 
 
-@app.post("/api/v1/analytics/query")
+@app.post("/api/v1/analytics/query", dependencies=[ratelimit.by_user("query", "rate_query_per_minute")])
 def analytics_query(body: QuestionIn, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     approved = {x.name: x.description for x in db.scalars(select(m.Metric).where(
         m.Metric.tenant_id == p.tenant_id, m.Metric.status == "approved"))}

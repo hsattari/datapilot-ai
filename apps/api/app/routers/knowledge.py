@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..services import ratelimit
 from .. import models as m
 from ..config import get_settings
 from ..db import get_db
@@ -84,12 +85,12 @@ def remove_document(doc_id: str, p: Principal = Depends(require_writer), db: Ses
     db.commit()
 
 
-@router.post("/search")
+@router.post("/search", dependencies=[ratelimit.by_user("query", "rate_query_per_minute")])
 def search(body: SearchIn, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     return {"results": rag.search(db, p.tenant_id, body.query, body.k)}
 
 
-@router.post("/ask")
+@router.post("/ask", dependencies=[ratelimit.by_user("query", "rate_query_per_minute")])
 def ask(body: SearchIn, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     """Grounded answer from the tenant's documents with citations; refuses when nothing relevant is found."""
     hits = rag.search(db, p.tenant_id, body.query, min(body.k, 6))

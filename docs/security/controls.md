@@ -1,10 +1,34 @@
-# Security controls implemented / outstanding
+# Security controls: implemented, tested, and outstanding
 
-Implemented: server-side tenant resolution; 404 (not 403) on cross-tenant IDs; upload extension/signature/
-size/binary checks and macro rejection; filename sanitising; path-traversal guard in storage; immutable raw
-objects; parameterised SQL; SQL validator; read-only per-tenant analytical connections; audit events;
-bcrypt password hashing; short-lived JWTs.
+## Implemented and tested (automated tests; 118 pass on PostgreSQL)
+- Tenant isolation: tenant resolved server-side from membership; cross-tenant IDs return 404; per-tenant analytical store.
+- Sign-in: bcrypt hashing (72-byte limit enforced), generic "Invalid credentials" for unknown email and wrong password
+  (equal timing via a dummy hash), **lockout** after 5 failures for 15 minutes (also refuses a correct password
+  during lockout), counters reset on success, every failure/lock/login audited.
+- **Two-step sign-in (TOTP, RFC 6238 vectors tested):** setup, enable with a valid code, 8 single-use recovery codes
+  (stored hashed), code replay refused, secret **encrypted at rest** with a key separate from the JWT secret,
+  disable needs password plus a code.
+- **User management:** admins add people (initial password), change roles, deactivate/reactivate; deactivation takes
+  effect on the next request; the last active administrator cannot be removed; viewers are read-only.
+- **Rate limiting:** per IP on register/login/MFA/password endpoints, per user on questions and uploads; 429 with
+  Retry-After.
+- **Production guard:** with ENVIRONMENT=production the API refuses to start with a default/short JWT secret, no MFA
+  encryption key, or rate limiting off.
+- Response headers: nosniff, frame deny, no-referrer, `Cache-Control: no-store` and a restrictive CSP on API responses.
+- Uploads: extension/signature/size/binary checks, macro rejection, filename sanitising, path-traversal guard, immutable
+  raw objects. Queries: structured plan -> template SQL with bound parameters -> sqlglot validator (single SELECT,
+  allowlisted tables/functions, LEFT JOIN on key equality only) -> read-only per-tenant connection with timeout.
+- Audit events for sign-in, user changes, approvals, queries, reports, alerts and settings (admins can read them).
 
-Outstanding before launch: OIDC + MFA, rate limiting, malware scanning, parser sandboxing/egress limits,
-field-level restrictions, secrets in Key Vault, TLS termination, encryption/key management review,
-retention/deletion workflows, DPIA and legal review (UK GDPR / DPA 2018), adversarial tenant-isolation testing.
+## Known limits of what is built (be aware, not hidden)
+- The rate limiter is in-process: with several API replicas each counts separately. Enforce limits at the gateway too.
+- Lockout can be used to lock a known user out for 15 minutes (a trade-off for stopping password guessing).
+- Access tokens last 30 minutes and are not revoked on password change; deactivation IS immediate (checked per request).
+- Initial passwords for added users are set by an admin, not by an e-mailed invitation (no e-mail service yet).
+- MFA is optional per user; it is not yet enforced by tenant policy.
+- Not tested against a real identity provider: OIDC/Entra sign-in is not built yet.
+
+## Outstanding before launch
+OIDC/Entra sign-in and tenant-level MFA policy, malware scanning of uploads, parser sandboxing/egress limits,
+field-level restrictions, secrets in Key Vault, TLS termination, key-management review, retention/deletion workflows,
+DPIA and legal review (UK GDPR / DPA 2018), independent penetration test and adversarial tenant-isolation testing.

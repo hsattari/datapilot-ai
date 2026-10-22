@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .db import get_db
-from .models import TenantMembership
+from .models import TenantMembership, User
 from .security import decode_token
 
 bearer = HTTPBearer(auto_error=False)
@@ -36,6 +36,9 @@ def get_principal(
     try:
         user_id = decode_token(creds.credentials)
     except jwt.PyJWTError:
+        raise HTTPException(401, "Invalid or expired token")
+    user = db.get(User, user_id)
+    if user is None or user.disabled:  # checked on every request, so deactivation takes effect immediately
         raise HTTPException(401, "Invalid or expired token")
     m = db.scalar(select(TenantMembership).where(TenantMembership.user_id == user_id))
     if m is None:

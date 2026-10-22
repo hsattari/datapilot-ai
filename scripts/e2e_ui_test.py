@@ -7,22 +7,30 @@
     python scripts/e2e_ui_test.py [screenshot_dir]      (set CHROMIUM_PATH to use a specific browser binary)
 
 Registers a user, uploads the reference CSV, approves the model, checks the dashboard (350 / 140), asks for gross
-profit (140) and asks revenue by category after approving a products file, checks an unsafe question is refused, then saves/runs a report, triggers an alert, edits settings and checks the activity log. Gross profit is approved through the Business Metrics screen; the quality panel is checked.
+profit (140) and asks revenue by category after approving a products file, checks an unsafe question is refused, then saves/runs a report, triggers an alert, edits settings, checks the activity log, adds a viewer and turns on two-step sign-in. Gross profit is approved through the Business Metrics screen; the quality panel is checked.
 """
-import json, sys, urllib.request
+import base64, hashlib, hmac, json, struct, sys, time as _t, urllib.error, urllib.request
 from playwright.sync_api import sync_playwright, expect
 
 import pathlib
 REPO = str(pathlib.Path(__file__).resolve().parents[1])
 S = sys.argv[1] if len(sys.argv) > 1 else "."  # screenshot dir
 import time
-EMAIL, PW = f"ui{int(time.time())}@test.example", "correct-horse-1"
+STAMP = int(time.time())
+EMAIL, PW = f"ui{STAMP}@test.example", "correct-horse-1"
 
 def api(method, path, body=None, token=None):
     req = urllib.request.Request("http://localhost:8000" + path, method=method,
                                  data=json.dumps(body).encode() if body is not None else None,
                                  headers={"Content-Type": "application/json", **({"Authorization": f"Bearer {token}"} if token else {})})
     return json.load(urllib.request.urlopen(req))
+
+
+def totp(secret, offset=0):
+    key = base64.b32decode(secret + "=" * (-len(secret) % 8), casefold=True)
+    mac = hmac.new(key, struct.pack(">Q", int(_t.time() // 30) + offset), hashlib.sha1).digest()
+    o = mac[-1] & 15
+    return str((struct.unpack(">I", mac[o:o + 4])[0] & 0x7FFFFFFF) % 10**6).zfill(6)
 
 errors = []
 with sync_playwright() as p:
@@ -144,5 +152,50 @@ with sync_playwright() as p:
     expect(page.get_by_text("settings.updated").first).to_be_visible()
     page.screenshot(path=f"{S}/activity.png")
     print("OK settings saved; activity log, jobs and usage visible")
+
+    page.get_by_role("button", name="Settings").click()
+    expect(page.get_by_test_id("users")).to_be_visible(timeout=10000)
+    page.get_by_placeholder("Email", exact=True).fill(f"viewer.{STAMP}@test.example")
+    page.get_by_placeholder("Initial password (10+ characters)").fill("viewer-pass-123")
+    page.get_by_role("button", name="Add person").click()
+    expect(page.locator(f"tr[data-user='viewer.{STAMP}@test.example']")).to_contain_text("active", timeout=10000)
+    vt = api("POST", "/api/v1/auth/login", {"email": f"viewer.{STAMP}@test.example", "password": "viewer-pass-123"})["token"]
+    try:
+        api("PATCH", "/api/v1/settings", {"name": "Hacked"}, token=vt); raise SystemExit("viewer must not change settings")
+    except urllib.error.HTTPError as e:
+        assert e.code == 403, e.code
+    print("OK person added in the UI; the viewer cannot change settings")
+
+    page.get_by_role("button", name="Set up two-step sign-in").click()
+    secret = page.get_by_test_id("mfa-secret").inner_text()
+    page.get_by_placeholder("6-digit code").fill(totp(secret))
+    page.get_by_role("button", name="Turn on").click()
+    expect(page.get_by_test_id("recovery-codes")).to_be_visible(timeout=10000)
+    expect(page.get_by_test_id("security")).to_contain_text("two-step sign-in is on")
+    try:
+        api("POST", "/api/v1/auth/login", {"email": EMAIL, "password": PW}); raise SystemExit("login must need a code now")
+    except urllib.error.HTTPError as e:
+        assert e.code == 401 and b"mfa_required" in e.read()
+    api("POST", "/api/v1/auth/login", {"email": EMAIL, "password": PW, "code": totp(secret, 1)})  # the next 30-second code is accepted
+    recovery = page.get_by_test_id("recovery-codes").inner_text().split("\n")[-1].strip()
+    assert len(recovery) == 14 and recovery.count("-") == 2, recovery
+
+    fresh = b.new_page()  # a different browser session: sign in through the screen
+    fresh.goto("http://localhost:3000")
+    fresh.get_by_role("link", name="Sign in").click()
+    fresh.get_by_placeholder("Email").fill(EMAIL)
+    fresh.get_by_placeholder("Password (10+ chars)").fill(PW)
+    fresh.get_by_role("button", name="Sign in").click()
+    expect(fresh.get_by_text("Enter the 6-digit code")).to_be_visible(timeout=10000)
+    fresh.get_by_placeholder("Authenticator or recovery code").fill(recovery)
+    fresh.get_by_role("button", name="Sign in").click()
+    expect(fresh.get_by_role("button", name="Data Sources")).to_be_visible(timeout=10000)
+    fresh.close()
+    try:
+        api("POST", "/api/v1/auth/login", {"email": EMAIL, "password": PW, "code": recovery}); raise SystemExit("recovery code must be single-use")
+    except urllib.error.HTTPError as e:
+        assert e.code == 401
+    print("OK sign-in screen asks for the code; a recovery code works once and then is refused")
+    print("OK two-step sign-in turned on in the UI; the server now demands a code")
     b.close()
 print("JS errors:", errors or "none")

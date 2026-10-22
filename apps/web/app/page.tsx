@@ -7,14 +7,18 @@ const card = { background: "#fff", borderRadius: 8, padding: 16, boxShadow: "0 1
 
 function Auth({ onAuthed }: { onAuthed: () => void }) {
   const [mode, setMode] = useState<"login" | "register">("register");
-  const [f, setF] = useState({ organisation: "", email: "", password: "" });
+  const [f, setF] = useState({ organisation: "", email: "", password: "", code: "" });
+  const [needCode, setNeedCode] = useState(false);
   const [err, setErr] = useState("");
   const submit = async () => {
     try {
-      const r = mode === "register" ? await api("/tenants", { method: "POST", body: JSON.stringify(f) })
-                                    : await api("/auth/login", { method: "POST", body: JSON.stringify(f) });
+      const r = mode === "register" ? await api("/tenants", { method: "POST", body: JSON.stringify({ organisation: f.organisation, email: f.email, password: f.password }) })
+                                    : await api("/auth/login", { method: "POST", body: JSON.stringify({ email: f.email, password: f.password, code: f.code || undefined }) });
       setToken(r.token); onAuthed();
-    } catch (e: any) { setErr(e.message); }
+    } catch (e: any) {
+      if (e.message === "mfa_required") { setNeedCode(true); setErr("Enter the 6-digit code from your authenticator app (or a recovery code)."); }
+      else setErr(e.message);
+    }
   };
   return (
     <div style={{ ...card, maxWidth: 380, margin: "80px auto" }}>
@@ -22,6 +26,7 @@ function Auth({ onAuthed }: { onAuthed: () => void }) {
       {mode === "register" && <input placeholder="Organisation" value={f.organisation} onChange={e => setF({ ...f, organisation: e.target.value })} />}
       <input placeholder="Email" value={f.email} onChange={e => setF({ ...f, email: e.target.value })} />
       <input placeholder="Password (10+ chars)" type="password" value={f.password} onChange={e => setF({ ...f, password: e.target.value })} />
+      {mode === "login" && needCode && <input placeholder="Authenticator or recovery code" autoComplete="one-time-code" value={f.code} onChange={e => setF({ ...f, code: e.target.value })} />}
       <p><button onClick={submit}>{mode === "register" ? "Create workspace" : "Sign in"}</button>{" "}
         <a href="#" onClick={e => { e.preventDefault(); setMode(mode === "login" ? "register" : "login"); }}>{mode === "login" ? "Register" : "Sign in"}</a></p>
       {err && <p role="alert" style={{ color: "#b00020" }}>{err}</p>}
@@ -273,6 +278,81 @@ function Activity() {
   </>);
 }
 
+function AccountSecurity() {
+  const [me, setMe] = useState<any>(null);
+  const [setup, setSetup] = useState<any>(null);
+  const [codes, setCodes] = useState<string[]>([]);
+  const [code, setCode] = useState("");
+  const [pw, setPw] = useState({ current_password: "", new_password: "" });
+  const [msg, setMsg] = useState("");
+  const load = useCallback(() => api("/auth/me").then(setMe).catch(e => setMsg(e.message)), []);
+  useEffect(() => { load(); }, [load]);
+  const begin = async () => { try { setSetup(await api("/auth/mfa/setup", { method: "POST" })); setMsg(""); } catch (e: any) { setMsg(e.message); } };
+  const enable = async () => {
+    try { const r = await api("/auth/mfa/enable", { method: "POST", body: JSON.stringify({ code }) }); setCodes(r.recovery_codes); setSetup(null); setCode(""); await load(); setMsg("Two-step sign-in is on."); }
+    catch (e: any) { setMsg(e.message); }
+  };
+  const disable = async () => {
+    try { await api("/auth/mfa/disable", { method: "POST", body: JSON.stringify({ password: pw.current_password, code }) }); setCode(""); setCodes([]); await load(); setMsg("Two-step sign-in is off."); }
+    catch (e: any) { setMsg(e.message); }
+  };
+  const changePw = async () => {
+    try { await api("/auth/change-password", { method: "POST", body: JSON.stringify(pw) }); setPw({ current_password: "", new_password: "" }); setMsg("Password changed."); }
+    catch (e: any) { setMsg(e.message); }
+  };
+  if (!me) return <div style={card}>{msg || "Loading…"}</div>;
+  return (<div style={card} data-testid="security">
+    <h3 style={{ marginTop: 0 }}>Your sign-in</h3>
+    <p>{me.email} — two-step sign-in is <b>{me.mfa_enabled ? "on" : "off"}</b>{me.mfa_enabled ? ` (${me.recovery_codes_left} recovery codes left)` : ""}.</p>
+    {!me.mfa_enabled && !setup && <button onClick={begin}>Set up two-step sign-in</button>}
+    {setup && <div>
+      <p>Add this key to an authenticator app (Microsoft Authenticator, Google Authenticator, 1Password…), then enter the 6-digit code it shows.</p>
+      <p>Key: <code data-testid="mfa-secret">{setup.secret}</code></p>
+      <p><small>Or open this link on your phone: <code>{setup.otpauth_uri}</code></small></p>
+      <input placeholder="6-digit code" value={code} onChange={e => setCode(e.target.value)} />
+      <button onClick={enable} disabled={code.trim().length < 6}>Turn on</button></div>}
+    {codes.length > 0 && <div data-testid="recovery-codes"><p><b>Recovery codes</b> — save them now. Each works once and they are not shown again.</p>
+      <pre>{codes.join("\n")}</pre></div>}
+    {me.mfa_enabled && <div><p>To turn it off, enter your password and a current code.</p>
+      <input type="password" placeholder="Current password" value={pw.current_password} onChange={e => setPw({ ...pw, current_password: e.target.value })} />
+      <input placeholder="Authenticator or recovery code" value={code} onChange={e => setCode(e.target.value)} />
+      <button onClick={disable}>Turn off</button></div>}
+    <h4>Change password</h4>
+    <input type="password" placeholder="Current password" value={pw.current_password} onChange={e => setPw({ ...pw, current_password: e.target.value })} />
+    <input type="password" placeholder="New password (10+ characters)" value={pw.new_password} onChange={e => setPw({ ...pw, new_password: e.target.value })} />
+    <button onClick={changePw} disabled={!pw.current_password || pw.new_password.length < 10}>Change password</button>
+    {msg && <p role="status">{msg}</p>}
+  </div>);
+}
+
+function Users() {
+  const [rows, setRows] = useState<any[] | null>(null);
+  const [f, setF] = useState({ email: "", password: "", role: "viewer" });
+  const [msg, setMsg] = useState("");
+  const load = useCallback(() => api("/users").then(setRows).catch(e => setMsg(e.message)), []);
+  useEffect(() => { load(); }, [load]);
+  const add = async () => {
+    try { await api("/users", { method: "POST", body: JSON.stringify(f) }); setMsg(`Added ${f.email}. Share the password securely; they can change it after signing in.`); setF({ email: "", password: "", role: "viewer" }); await load(); }
+    catch (e: any) { setMsg(e.message); }
+  };
+  const patch = async (id: string, body: any) => { try { await api(`/users/${id}`, { method: "PATCH", body: JSON.stringify(body) }); await load(); } catch (e: any) { setMsg(e.message); } };
+  if (!rows) return <div style={card}>{msg || "Users are visible to administrators only."}</div>;
+  return (<div style={card} data-testid="users">
+    <h3 style={{ marginTop: 0 }}>People</h3>
+    <table><thead><tr><th>Email</th><th>Role</th><th>Two-step</th><th>Status</th><th></th></tr></thead>
+      <tbody>{rows.map(u => <tr key={u.id} data-user={u.email}><td>{u.email}</td>
+        <td><select value={u.role} onChange={e => patch(u.id, { role: e.target.value })}><option>admin</option><option>analyst</option><option>viewer</option></select></td>
+        <td>{u.mfa_enabled ? "on" : "off"}</td><td>{u.active ? "active" : "deactivated"}</td>
+        <td><button onClick={() => patch(u.id, { active: !u.active })}>{u.active ? "Deactivate" : "Reactivate"}</button></td></tr>)}</tbody></table>
+    <h4>Add a person</h4>
+    <input placeholder="Email" value={f.email} onChange={e => setF({ ...f, email: e.target.value })} />
+    <input type="password" placeholder="Initial password (10+ characters)" value={f.password} onChange={e => setF({ ...f, password: e.target.value })} />
+    <select value={f.role} onChange={e => setF({ ...f, role: e.target.value })}><option>viewer</option><option>analyst</option><option>admin</option></select>{" "}
+    <button onClick={add} disabled={!f.email || f.password.length < 10}>Add person</button>
+    {msg && <p role="status">{msg}</p>}
+  </div>);
+}
+
 function Settings() {
   const [f, setF] = useState({ name: "", currency: "", timezone: "" });
   const [role, setRole] = useState("");
@@ -303,7 +383,7 @@ export default function Page() {
       <nav style={{ marginBottom: 16 }}>
         {(["home", "sources", "metrics", "ask", "reports", "alerts", "activity", "settings"] as Tab[]).map(t => <button key={t} onClick={() => setTab(t)} disabled={tab === t} style={{ marginRight: 8 }}>{{ home: "Home", sources: "Data Sources", metrics: "Business Metrics", ask: "Ask Your Data", reports: "Reports", alerts: "Alerts", activity: "Activity", settings: "Settings" }[t]}</button>)}
       </nav>
-      {tab === "home" ? <Home /> : tab === "sources" ? <Sources /> : tab === "metrics" ? <Metrics /> : tab === "reports" ? <Reports /> : tab === "alerts" ? <Alerts /> : tab === "activity" ? <Activity /> : tab === "settings" ? <Settings /> : <Ask />}
+      {tab === "home" ? <Home /> : tab === "sources" ? <Sources /> : tab === "metrics" ? <Metrics /> : tab === "reports" ? <Reports /> : tab === "alerts" ? <Alerts /> : tab === "activity" ? <Activity /> : tab === "settings" ? <><Settings /><AccountSecurity /><Users /></> : <Ask />}
     </main>
   );
 }

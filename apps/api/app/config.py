@@ -9,8 +9,21 @@ class Settings(BaseSettings):
     # Operational metadata (PostgreSQL in production; SQLite allowed for tests)
     database_url: str = "postgresql+psycopg2://datapilot:datapilot@localhost:5432/datapilot"
 
+    # "production" refuses to start with the default/short JWT secret
+    environment: str = "development"
+
     # Identity
     jwt_secret: str = "change-me-in-production"
+    mfa_encryption_key: str = ""   # separate key for MFA secrets at rest (falls back to jwt_secret; use Key Vault in production)
+    login_max_failures: int = 5
+    login_lockout_minutes: int = 15
+
+    # Rate limits (requests per minute; 0 = off). In-process: also enforce at the gateway in production.
+    rate_limit_enabled: bool = True
+    rate_auth_per_minute: int = 20       # per client IP: register, login, MFA
+    rate_query_per_minute: int = 30      # per user: questions
+    rate_upload_per_minute: int = 10     # per user: file uploads
+    trust_proxy_headers: bool = False    # honour X-Forwarded-For only behind a proxy you control
     jwt_algorithm: str = "HS256"
     jwt_ttl_minutes: int = 30
 

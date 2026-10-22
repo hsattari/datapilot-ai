@@ -42,6 +42,8 @@ def _reset_schema():
 
 @pytest.fixture()
 def client():
+    from app.services import ratelimit
+    ratelimit.reset()  # rate-limit counters are per process: start every test clean
     _reset_schema()
     return TestClient(app)
 

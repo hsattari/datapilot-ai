@@ -13,6 +13,7 @@ class RegisterIn(BaseModel):
 class LoginIn(BaseModel):
     email: str
     password: str
+    code: str | None = Field(default=None, max_length=32)  # authenticator code or recovery code, if MFA is on
 
 
 class SourceIn(BaseModel):
