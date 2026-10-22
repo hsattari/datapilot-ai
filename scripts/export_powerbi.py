@@ -8,7 +8,7 @@ Writes to <project folder>\\powerbi_export\\ (the full path is printed at the en
     fact_sales.csv - the reference data with the canonical column names the measures expect
                      (only written if data/synthetic/orders_reference.csv exists)
 """
-import csv, getpass, json, pathlib, sys, urllib.error, urllib.request
+import csv, getpass, json, os, pathlib, sys, urllib.error, urllib.request
 
 API = "http://localhost:8000/api/v1"
 
@@ -29,7 +29,7 @@ def call(path, body=None, token=None):
 
 if len(sys.argv) < 2:
     sys.exit(__doc__)
-tok = call("/auth/login", {"email": sys.argv[1], "password": getpass.getpass("Password: ")})["token"]
+tok = call("/auth/login", {"email": sys.argv[1], "password": os.environ.get("DATAPILOT_PASSWORD") or getpass.getpass("Password: ")})["token"]
 out = call("/export/powerbi", token=tok)
 d = pathlib.Path(__file__).resolve().parents[1] / "powerbi_export"; d.mkdir(exist_ok=True)  # always inside the project folder
 (d / "measures.dax").write_text(out["measures_dax"], encoding="utf-8")
