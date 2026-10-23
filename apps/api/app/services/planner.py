@@ -144,11 +144,17 @@ Rules:
 - time_range: {{"type":"all_time"}} unless a window is given; "last 6 months" -> {{"type":"last_n_complete_months","n":6}}.
 - filters only for a specific named value, e.g. product Widget -> {{"field":"product","value":"Widget"}}.
 - visualization: number for totals, line_chart for monthly trends, bar_chart for breakdowns, table otherwise.
+- Anything about the future or an estimate (forecast, predict, projection, "what will...") is NOT answerable: use clarify.
+  Never answer a different question than the one asked (for example, never turn a forecast into a total).
+- A metric's "also called" words are synonyms for that metric.
 
 Examples (question -> reply):
 "total revenue" -> {{"intent":"metric_total","metric":"net_revenue","dimensions":[],"time_range":{{"type":"all_time"}},"filters":[],"visualization":"number"}}
 "gross profit by product over the last 3 months" -> {{"intent":"metric_breakdown","metric":"gross_profit","dimensions":["product"],"time_range":{{"type":"last_n_complete_months","n":3}},"filters":[],"visualization":"bar_chart"}}
 "monthly orders for the North region" -> {{"intent":"compare_metric_over_time","metric":"orders","dimensions":["month"],"time_range":{{"type":"all_time"}},"filters":[{{"field":"region","value":"North"}}],"visualization":"line_chart"}}
+"gross profit by product for each month" -> {{"intent":"compare_metric_over_time","metric":"gross_profit","dimensions":["month","product"],"time_range":{{"type":"all_time"}},"filters":[],"visualization":"table"}}
+"what is our turnover" -> {{"intent":"metric_total","metric":"net_revenue","dimensions":[],"time_range":{{"type":"all_time"}},"filters":[],"visualization":"number"}}
+"forecast next quarter's sales" -> {{"clarify":"I can report past amounts of approved metrics, not forecasts. Do you want recent sales by month instead?"}}
 "what is our profit margin percentage?" -> {{"clarify":"I can report gross profit as an amount; percentages are not available yet. Do you want the amount?"}}
 "delete every order from last year" -> {{"refuse":"I can only answer read-only questions about approved metrics."}}"""
 
@@ -163,8 +169,12 @@ def _client():
 
 
 def build_system_prompt(approved: dict[str, str], unapproved: dict[str, str]) -> str:
-    metrics = "\n".join([f"- {n} (approved): {d}" for n, d in sorted(approved.items())]
-                        + [f"- {n} (NOT approved): {d}" for n, d in sorted(unapproved.items())])
+    def line(n, d, status):
+        words = METRIC_WORDS.get(n)
+        also = f"; also called: {', '.join(words)}" if words else ""
+        return f"- {n} ({status}{also}): {d}"
+    metrics = "\n".join([line(n, d, "approved") for n, d in sorted(approved.items())]
+                        + [line(n, d, "NOT approved") for n, d in sorted(unapproved.items())])
     return SYSTEM_PROMPT.format(schema=json.dumps(Plan.model_json_schema(), separators=(",", ":")),
                                 metrics=metrics or "(none)")
 
@@ -192,7 +202,11 @@ def llm_plan(question: str, approved: dict[str, str], unapproved: dict[str, str]
     except ValidationError:
         return None, "invalid_plan"
     except Exception as e:  # network, auth, quota, timeout, bad JSON: message may contain details, keep the type only
+        if getattr(e, "code", None) == "content_filter":  # Azure blocked the prompt itself (e.g. a jailbreak attempt)
+            return None, "content_filter"
         return None, type(e).__name__
+    plan.intent = ("metric_total" if not plan.dimensions else
+                   "compare_metric_over_time" if "month" in plan.dimensions else "metric_breakdown")  # derived, not trusted
     if plan.metric in unapproved:  # the model must not decide what is allowed: the registry does
         return PlanResult("clarification", f"'{plan.metric}' is not an approved metric yet. "
                           "Confirm its definition and required source data first.", source="llm"), None
@@ -204,6 +218,8 @@ def llm_plan(question: str, approved: dict[str, str], unapproved: dict[str, str]
 def make_plan(question: str, approved: dict[str, str], unapproved: dict[str, str] | None = None) -> PlanResult:
     if REFUSE.search(question.lower()):  # hard policy check runs before any model call
         return PlanResult("refusal", "I can only answer read-only questions about your own approved metrics.")
+    if UNSUPPORTED.search(question.lower()):  # a plan cannot express these; do not let a model answer another question
+        return PlanResult("clarification", UNSUPPORTED_MSG)
     res, reason = llm_plan(question, approved, unapproved)
     if res is not None:
         return res

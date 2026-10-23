@@ -99,9 +99,16 @@ rc = 0
 if passed != len(results):
     rc = 1
     print("Failed:", ", ".join(c["id"] for c, ok in results if not ok))
-if live and sources.get("rules"):
+filtered = reasons.pop("content_filter", 0)
+if filtered:
+    print(f"Note: Azure's content filter blocked {filtered} prompt(s) before the model answered; the rule planner handled them "
+          "(expected for prompt-injection cases, and safe).")
+if live and reasons:
     rc = 1
-    print(f"WARNING: the live model was configured but the rule planner answered {sources['rules']} time(s). Reasons: {dict(reasons)}")
+    print(f"WARNING: the live model was configured but failed {sum(reasons.values())} time(s) and the rule planner answered. "
+          f"Reasons: {dict(reasons)}")
     print("  JSONDecodeError/invalid_plan = the model replied with something unusable; AuthenticationError/NotFoundError/"
-          "PermissionDeniedError = key, endpoint or deployment name; APITimeoutError/APIConnectionError = network.")
+          "PermissionDeniedError = key, endpoint or deployment name; APITimeoutError/APIConnectionError = network; "
+          "BadRequestError = the request itself was refused (check the deployment supports JSON mode and the API version).")
+print("(Cases answered by 'rules' without a reason are the hard policy checks that run before the model on purpose.)")
 sys.exit(rc)
