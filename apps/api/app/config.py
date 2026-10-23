@@ -41,6 +41,14 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_ttl_minutes: int = 30
 
+    # Malware scanning of uploads: "off" or "clamav" (a clamd daemon, e.g. the clamav/clamav container).
+    # Fail-closed: if scanning is on and the scanner cannot answer, uploads are refused (503).
+    malware_scan: str = "off"
+    clamav_host: str = "localhost"
+    clamav_port: int = 3310
+    clamav_timeout_seconds: int = 15
+    malware_scan_fail_open: bool = False   # only for an explicit, audited decision; never in production
+
     # Raw storage: "local" for dev, "adls" for Azure Data Lake Storage Gen2
     storage_backend: str = "local"
     local_storage_path: str = "./.data/raw"

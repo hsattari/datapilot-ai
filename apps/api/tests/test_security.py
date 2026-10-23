@@ -243,6 +243,13 @@ def test_production_refuses_development_secrets(monkeypatch):
     with pytest.raises(RuntimeError, match="MFA_ENCRYPTION_KEY"):
         check_production_config()
     monkeypatch.setattr(s, "mfa_encryption_key", "y" * 40)
+    with pytest.raises(RuntimeError, match="MALWARE_SCAN"):
+        check_production_config()  # production must scan uploads
+    monkeypatch.setattr(s, "malware_scan", "clamav")
+    monkeypatch.setattr(s, "malware_scan_fail_open", True)
+    with pytest.raises(RuntimeError, match="FAIL_OPEN"):
+        check_production_config()
+    monkeypatch.setattr(s, "malware_scan_fail_open", False)
     check_production_config()  # now fine
     monkeypatch.setattr(s, "environment", "development")
     monkeypatch.setattr(s, "jwt_secret", "change-me-in-production")

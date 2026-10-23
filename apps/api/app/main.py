@@ -1,6 +1,7 @@
 import hashlib
 from datetime import date
 
+from starlette.concurrency import run_in_threadpool
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -24,6 +25,7 @@ from .services import quality, semantic
 from .services.planner import make_plan
 from .services.query_engine import QueryRejected
 from .services.storage import get_storage, safe_filename
+from .services import malware
 from .services.validation import UploadRejected, validate_upload
 
 def check_production_config() -> None:
@@ -37,6 +39,10 @@ def check_production_config() -> None:
             problems.append("MFA_ENCRYPTION_KEY must be set (32+ characters, separate from JWT_SECRET)")
         if not s.rate_limit_enabled:
             problems.append("RATE_LIMIT_ENABLED must stay on in production")
+        if s.malware_scan.lower() != "clamav":
+            problems.append("MALWARE_SCAN must be 'clamav' in production")
+        if s.malware_scan_fail_open:
+            problems.append("MALWARE_SCAN_FAIL_OPEN must be off in production")
         if problems:
             raise RuntimeError("Unsafe production configuration: " + "; ".join(problems))
 
@@ -106,6 +112,22 @@ async def upload(source_id: str, file: UploadFile = File(...), p: Principal = De
         audit(db, p, "upload.rejected", filename=name, reason=str(e))
         db.commit()
         raise HTTPException(422, str(e))
+    scan_note = None
+    if malware.enabled():
+        try:
+            verdict = await run_in_threadpool(malware.scan_bytes, data)
+        except malware.ScannerUnavailable as e:
+            if not cfg.malware_scan_fail_open:
+                audit(db, p, "upload.scan_unavailable", filename=name, reason=str(e))
+                db.commit()
+                raise HTTPException(503, "File scanning is temporarily unavailable. Nothing was stored; please try again shortly.")
+            scan_note = "skipped_scanner_unavailable"
+            audit(db, p, "upload.scan_skipped", filename=name, reason=str(e))
+        else:
+            if verdict.status == "infected":
+                audit(db, p, "upload.malware_detected", filename=name, signature=verdict.signature)
+                db.commit()
+                raise HTTPException(422, "The file was rejected by the malware scan and was not stored.")
     sha = hashlib.sha256(data).hexdigest()
     version = 1 + (db.scalar(select(m.SourceFile.version).where(
         m.SourceFile.tenant_id == p.tenant_id, m.SourceFile.source_id == source_id,
@@ -118,7 +140,7 @@ async def upload(source_id: str, file: UploadFile = File(...), p: Principal = De
     get_storage().put(sf.storage_key, data)  # immutable raw copy (bronze)
     job = m.IngestionJob(tenant_id=p.tenant_id, file_id=sf.id)
     db.add(job)
-    audit(db, p, "upload.accepted", file_id=sf.id, sha256=sha)
+    audit(db, p, "upload.accepted", file_id=sf.id, sha256=sha, **({"scan": scan_note} if scan_note else {}))
     db.commit()
     return {"file_id": sf.id, "job_id": job.id, "sha256": sha, "version": version}
 

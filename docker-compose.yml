@@ -4,10 +4,15 @@ services:
     environment: { POSTGRES_USER: datapilot, POSTGRES_PASSWORD: datapilot, POSTGRES_DB: datapilot }
     volumes: [pgdata:/var/lib/postgresql/data]
     healthcheck: { test: ["CMD-SHELL", "pg_isready -U datapilot"], interval: 5s, retries: 10 }
+  clamav:
+    image: clamav/clamav:stable   # clamd on :3310; the first start downloads signatures (a few minutes). Uploads are refused until it answers.
+    volumes: [clamdata:/var/lib/clamav]
+    healthcheck: { test: ["CMD", "clamdcheck.sh"], interval: 30s, timeout: 10s, retries: 10, start_period: 120s }
   api:
     build: { context: ., dockerfile: infrastructure/docker/api.Dockerfile }
     env_file: .env
-    depends_on: { postgres: { condition: service_healthy } }
+    environment: { MALWARE_SCAN: "clamav", CLAMAV_HOST: "clamav" }   # overrides .env: compose always scans
+    depends_on: { postgres: { condition: service_healthy }, clamav: { condition: service_started } }
     volumes: [appdata:/data]
     ports: ["8000:8000"]
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
@@ -22,4 +27,4 @@ services:
     environment: { API_URL: "http://api:8000" }
     depends_on: [api]
     ports: ["3000:3000"]
-volumes: { pgdata: {}, appdata: {} }
+volumes: { pgdata: {}, appdata: {}, clamdata: {} }
