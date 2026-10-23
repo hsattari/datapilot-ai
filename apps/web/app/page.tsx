@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { api, setToken } from "./api";
+import { api, apiDownload, setToken } from "./api";
 
 type Tab = "home" | "sources" | "metrics" | "ask" | "reports" | "alerts" | "activity" | "settings";
 const card = { background: "#fff", borderRadius: 8, padding: 16, boxShadow: "0 1px 3px #0001", marginBottom: 16 } as const;
@@ -329,6 +329,7 @@ function Users() {
   const [rows, setRows] = useState<any[] | null>(null);
   const [f, setF] = useState({ email: "", password: "", role: "viewer" });
   const [msg, setMsg] = useState("");
+  const [erasing, setErasing] = useState("");
   const load = useCallback(() => api("/users").then(setRows).catch(e => setMsg(e.message)), []);
   useEffect(() => { load(); }, [load]);
   const add = async () => {
@@ -336,6 +337,10 @@ function Users() {
     catch (e: any) { setMsg(e.message); }
   };
   const patch = async (id: string, body: any) => { try { await api(`/users/${id}`, { method: "PATCH", body: JSON.stringify(body) }); await load(); } catch (e: any) { setMsg(e.message); } };
+  const erase = async (id: string, email: string) => {
+    try { await api(`/users/${id}`, { method: "DELETE" }); setErasing(""); setMsg(`Erased ${email}.`); await load(); }
+    catch (e: any) { setErasing(""); setMsg(e.message); }
+  };
   if (!rows) return <div style={card}>{msg || "Users are visible to administrators only."}</div>;
   return (<div style={card} data-testid="users">
     <h3 style={{ marginTop: 0 }}>People</h3>
@@ -343,7 +348,11 @@ function Users() {
       <tbody>{rows.map(u => <tr key={u.id} data-user={u.email}><td>{u.email}</td>
         <td><select value={u.role} onChange={e => patch(u.id, { role: e.target.value })}><option>admin</option><option>analyst</option><option>viewer</option></select></td>
         <td>{u.mfa_enabled ? "on" : "off"}</td><td>{u.active ? "active" : "deactivated"}</td>
-        <td><button onClick={() => patch(u.id, { active: !u.active })}>{u.active ? "Deactivate" : "Reactivate"}</button></td></tr>)}</tbody></table>
+        <td><button onClick={() => patch(u.id, { active: !u.active })}>{u.active ? "Deactivate" : "Reactivate"}</button>{" "}
+          {erasing === u.id
+            ? <><button onClick={() => erase(u.id, u.email)} style={{ background: "#b00020" }}>Confirm erase</button> <button onClick={() => setErasing("")}>Cancel</button></>
+            : <button onClick={() => setErasing(u.id)} style={{ background: "#6b7280" }}>Erase</button>}</td></tr>)}</tbody></table>
+    <small>Erasing removes the person's e-mail, password and sign-in links permanently; the activity log keeps only an anonymous id.</small>
     <h4>Add a person</h4>
     <input placeholder="Email" value={f.email} onChange={e => setF({ ...f, email: e.target.value })} />
     <input type="password" placeholder="Initial password (10+ characters)" value={f.password} onChange={e => setF({ ...f, password: e.target.value })} />
@@ -351,6 +360,39 @@ function Users() {
     <button onClick={add} disabled={!f.email || f.password.length < 10}>Add person</button>
     {msg && <p role="status">{msg}</p>}
   </div>);
+}
+
+function YourData() {
+  const [raw, setRaw] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [d, setD] = useState({ confirm_name: "", password: "", code: "" });
+  const exportAll = async () => {
+    setMsg("Preparing export…");
+    try { await apiDownload(`/export/tenant?include_raw=${raw}`, "datapilot-export.zip"); setMsg("Export downloaded."); }
+    catch (e: any) { setMsg(e.message); }
+  };
+  const del = async () => {
+    try {
+      await api("/tenant/delete", { method: "POST", body: JSON.stringify({ confirm_name: d.confirm_name, password: d.password, ...(d.code ? { code: d.code } : {}) }) });
+      setToken(""); window.location.reload();
+    } catch (e: any) { setMsg(e.message); }
+  };
+  return (<>
+    <div style={card} data-testid="export">
+      <h3 style={{ marginTop: 0 }}>Export your data</h3>
+      <p>Download everything we hold for your organisation: records as JSON, modelled tables as CSV, and (optionally) your original uploads. Passwords and sign-in secrets are never included.</p>
+      <label style={{ display: "inline-block", marginRight: 12 }}><input type="checkbox" checked={raw} onChange={e => setRaw(e.target.checked)} style={{ display: "inline", width: "auto", marginRight: 6 }} />Include original uploaded files</label>
+      <button onClick={exportAll}>Download export</button> {msg && <span role="status">{msg}</span>}
+    </div>
+    <div style={{ ...card, border: "1px solid #e0b4b4" }} data-testid="danger">
+      <h3 style={{ marginTop: 0, color: "#b00020" }}>Delete this organisation</h3>
+      <p>Permanently erases all data, files, reports and people in this organisation. This cannot be undone. Export your data first if you need a copy.</p>
+      <input placeholder="Type the organisation name exactly" value={d.confirm_name} onChange={e => setD({ ...d, confirm_name: e.target.value })} />
+      <input type="password" placeholder="Your password" value={d.password} onChange={e => setD({ ...d, password: e.target.value })} />
+      <input placeholder="Two-step code or recovery code (if you use two-step sign-in)" value={d.code} onChange={e => setD({ ...d, code: e.target.value })} />
+      <button onClick={del} disabled={!d.confirm_name || !d.password} style={{ background: "#b00020" }}>Delete organisation and all data</button>
+    </div>
+  </>);
 }
 
 function Settings() {
@@ -365,13 +407,13 @@ function Settings() {
     return () => { live = false; };
   }, []);
   const save = async () => { try { await api("/settings", { method: "PATCH", body: JSON.stringify(f) }); setMsg("Saved."); } catch (e: any) { setMsg(e.message); } };
-  return (<div style={card}>
+  return (<><div style={card}>
     <p style={{ marginTop: 0 }}>Your role: <b>{role}</b>. Only administrators can change settings.</p>
     <label>Organisation<input disabled={!loaded} value={f.name} onChange={e => setF(v => ({ ...v, name: e.target.value }))} /></label>
     <label>Currency (3 letters, e.g. GBP)<input disabled={!loaded} value={f.currency} onChange={e => setF(v => ({ ...v, currency: e.target.value.toUpperCase() }))} /></label>
     <label>Time zone (e.g. Europe/London)<input disabled={!loaded} value={f.timezone} onChange={e => setF(v => ({ ...v, timezone: e.target.value }))} /></label>
     <button onClick={save} disabled={!loaded || role !== "admin"}>Save settings</button> {msg && <span role="status">{msg}</span>}
-  </div>);
+  </div>{role === "admin" && <YourData />}</>);
 }
 
 export default function Page() {

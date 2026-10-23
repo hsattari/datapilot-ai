@@ -1,5 +1,6 @@
 """Raw object storage. Local filesystem for development; ADLS Gen2 for Azure deployments."""
 import re
+import shutil
 from pathlib import Path
 from typing import Protocol
 
@@ -15,6 +16,7 @@ def safe_filename(name: str) -> str:
 class Storage(Protocol):
     def put(self, key: str, data: bytes) -> None: ...
     def get(self, key: str) -> bytes: ...
+    def delete_prefix(self, prefix: str) -> int: ...
 
 
 class LocalStorage:
@@ -38,6 +40,15 @@ class LocalStorage:
     def get(self, key: str) -> bytes:
         return self._path(key).read_bytes()
 
+    def delete_prefix(self, prefix: str) -> int:
+        """Delete every object under a directory-like prefix (used for tenant deletion). Returns files removed."""
+        p = self._path(prefix.rstrip("/"))
+        if p == self.root or not p.exists():
+            return 0
+        n = sum(1 for f in p.rglob("*") if f.is_file())
+        shutil.rmtree(p)
+        return n
+
 
 class AdlsStorage:
     """ADLS Gen2 backend (managed identity / DefaultAzureCredential)."""
@@ -54,6 +65,19 @@ class AdlsStorage:
 
     def get(self, key: str) -> bytes:
         return self.fs.get_file_client(key).download_file().readall()
+
+    def delete_prefix(self, prefix: str) -> int:
+        from azure.core.exceptions import ResourceNotFoundError
+
+        path = prefix.rstrip("/")
+        if not path or ".." in path:
+            raise ValueError("Invalid storage prefix")
+        try:
+            n = sum(1 for p in self.fs.get_paths(path=path, recursive=True) if not p.is_directory)
+            self.fs.get_directory_client(path).delete_directory()
+            return n
+        except ResourceNotFoundError:
+            return 0
 
 
 def get_storage() -> Storage:

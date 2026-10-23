@@ -22,6 +22,7 @@
   users only, subject-based matching, no e-mail re-linking; tested with a fake identity provider incl. alg=none and
   HMAC-key-confusion attacks. See `oidc-entra.md`.
 - Audit events for sign-in, user changes, approvals, queries, reports, alerts and settings (admins can read them).
+- **Data lifecycle:** organisation export (ZIP with manifest, formula-safe CSV, no secrets), organisation deletion (name + password + MFA step-up, external stores first, proof-of-deletion record), person erasure, scheduled retention purge. See `data-lifecycle.md` for the limits (backups, unverified ADLS/Databricks paths).
 
 ## Known limits of what is built (be aware, not hidden)
 - The rate limiter is in-process: with several API replicas each counts separately. Enforce limits at the gateway too.
@@ -33,5 +34,5 @@
 
 ## Outstanding before launch
 Real-IdP test of OIDC/Entra and a Microsoft sign-in button, tenant-level MFA policy, e-mailed invitations, malware scanning of uploads, parser sandboxing/egress limits,
-field-level restrictions, secrets in Key Vault, TLS termination, key-management review, retention/deletion workflows,
+field-level restrictions, secrets in Key Vault, TLS termination, key-management review, backup/soft-delete configuration in Azure so erasure reaches backups, a real-service test of ADLS/Databricks deletion,
 DPIA and legal review (UK GDPR / DPA 2018), independent penetration test and adversarial tenant-isolation testing.

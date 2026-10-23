@@ -228,3 +228,13 @@ class Alert(Base):
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_by: Mapped[str] = mapped_column(String(36))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class DeletionRecord(Base):
+    """Proof that a tenant was erased. Deliberately holds no name, e-mail or business data: only ids, counts, time."""
+    __tablename__ = "deletion_log"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    tenant_id: Mapped[str] = mapped_column(String(36), index=True)   # not a foreign key: the tenant no longer exists
+    requested_by: Mapped[str] = mapped_column(String(36))            # opaque user id (that user is erased with the tenant)
+    counts: Mapped[dict] = mapped_column(JSON, default=dict)
+    deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

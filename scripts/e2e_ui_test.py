@@ -7,7 +7,7 @@
     python scripts/e2e_ui_test.py [screenshot_dir]      (set CHROMIUM_PATH to use a specific browser binary)
 
 Registers a user, uploads the reference CSV, approves the model, checks the dashboard (350 / 140), asks for gross
-profit (140) and asks revenue by category after approving a products file, checks an unsafe question is refused, then saves/runs a report, triggers an alert, edits settings, checks the activity log, adds a viewer and turns on two-step sign-in. Gross profit is approved through the Business Metrics screen; the quality panel is checked.
+profit (140) and asks revenue by category after approving a products file, checks an unsafe question is refused, then saves/runs a report, triggers an alert, edits settings, checks the activity log, adds and erases a viewer, turns on two-step sign-in, downloads the data export and finally deletes the organisation. Gross profit is approved through the Business Metrics screen; the quality panel is checked.
 """
 import base64, hashlib, hmac, json, struct, sys, time as _t, urllib.error, urllib.request
 from playwright.sync_api import sync_playwright, expect
@@ -166,6 +166,16 @@ with sync_playwright() as p:
         assert e.code == 403, e.code
     print("OK person added in the UI; the viewer cannot change settings")
 
+    row = page.locator(f"tr[data-user='viewer.{STAMP}@test.example']")
+    row.get_by_role("button", name="Erase", exact=True).click()
+    row.get_by_role("button", name="Confirm erase").click()
+    expect(page.locator(f"tr[data-user='viewer.{STAMP}@test.example']")).to_have_count(0, timeout=10000)
+    try:
+        api("POST", "/api/v1/auth/login", {"email": f"viewer.{STAMP}@test.example", "password": "viewer-pass-123"}); raise SystemExit("erased person must not sign in")
+    except urllib.error.HTTPError as e:
+        assert e.code == 401
+    print("OK person erased in the UI; they can no longer sign in")
+
     page.get_by_role("button", name="Set up two-step sign-in").click()
     secret = page.get_by_test_id("mfa-secret").inner_text()
     page.get_by_placeholder("6-digit code").fill(totp(secret))
@@ -177,8 +187,9 @@ with sync_playwright() as p:
     except urllib.error.HTTPError as e:
         assert e.code == 401 and b"mfa_required" in e.read()
     api("POST", "/api/v1/auth/login", {"email": EMAIL, "password": PW, "code": totp(secret, 1)})  # the next 30-second code is accepted
-    recovery = page.get_by_test_id("recovery-codes").inner_text().split("\n")[-1].strip()
-    assert len(recovery) == 14 and recovery.count("-") == 2, recovery
+    codes = [c.strip() for c in page.get_by_test_id("recovery-codes").inner_text().split("\n") if c.strip()]
+    recovery, spare = codes[-1], codes[-2]
+    assert len(recovery) == 14 and recovery.count("-") == 2 and len(spare) == 14, codes
 
     fresh = b.new_page()  # a different browser session: sign in through the screen
     fresh.goto("http://localhost:3000")
@@ -197,5 +208,30 @@ with sync_playwright() as p:
         assert e.code == 401
     print("OK sign-in screen asks for the code; a recovery code works once and then is refused")
     print("OK two-step sign-in turned on in the UI; the server now demands a code")
+
+    page.get_by_label("Include original uploaded files").check()
+    with page.expect_download() as dl:
+        page.get_by_role("button", name="Download export").click()
+    import zipfile
+    z = zipfile.ZipFile(dl.value.path())
+    n = z.namelist()
+    assert "data/fact_sales.csv" in n and "data/dim_product.csv" in n and any(x.startswith("raw/") for x in n), n
+    assert b"$2b$" not in b"".join(z.read(x) for x in n), "password hash leaked into the export"
+    print("OK export downloaded from the UI: tables, products list and original files, no secrets")
+
+    page.get_by_placeholder("Type the organisation name exactly").fill("UI Test Ltd")
+    page.get_by_placeholder("Your password").fill(PW)
+    page.get_by_role("button", name="Delete organisation and all data").click()
+    expect(page.get_by_text("Invalid credentials")).to_be_visible(timeout=10000)  # two-step is on: password alone is refused
+    assert errors and "401" in errors[-1], errors
+    errors.pop()  # that 401 is the refusal we just provoked on purpose
+    page.get_by_placeholder("Two-step code or recovery code").fill(spare)
+    page.get_by_role("button", name="Delete organisation and all data").click()
+    expect(page.get_by_role("button", name="Create workspace")).to_be_visible(timeout=15000)  # back at the sign-up screen
+    try:
+        api("POST", "/api/v1/auth/login", {"email": EMAIL, "password": PW, "code": totp(secret, 1)}); raise SystemExit("deleted organisation must not sign in")
+    except urllib.error.HTTPError as e:
+        assert e.code == 401
+    print("OK organisation deleted from the UI (needed password + two-step code); sign-in no longer works")
     b.close()
 print("JS errors:", errors or "none")

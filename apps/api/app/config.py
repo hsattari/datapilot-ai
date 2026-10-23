@@ -29,10 +29,14 @@ class Settings(BaseSettings):
     login_lockout_minutes: int = 15
 
     # Rate limits (requests per minute; 0 = off). In-process: also enforce at the gateway in production.
+    # Retention (days; 0 = keep forever). Expired question history and audit events are purged by the worker.
+    retention_queries_days: int = 365
+    retention_audit_days: int = 730
     rate_limit_enabled: bool = True
     rate_auth_per_minute: int = 20       # per client IP: register, login, MFA
     rate_query_per_minute: int = 30      # per user: questions
     rate_upload_per_minute: int = 10     # per user: file uploads
+    rate_export_per_minute: int = 3      # per user: full data exports
     trust_proxy_headers: bool = False    # honour X-Forwarded-For only behind a proxy you control
     jwt_algorithm: str = "HS256"
     jwt_ttl_minutes: int = 30

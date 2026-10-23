@@ -128,3 +128,24 @@ def list_tables(tenant_id: str) -> set[str]:
         return {r[0] for r in con.execute("SELECT table_name FROM information_schema.tables").fetchall()}
     finally:
         con.close()
+
+
+def export_table(tenant_id: str, table: str) -> tuple[list[str], list[tuple]]:
+    table = ident(table)
+    con = reader(tenant_id)
+    try:
+        cur = con.execute(f'SELECT * FROM "{table}"')
+        return [d[0] for d in cur.description], cur.fetchall()
+    finally:
+        con.close()
+
+
+def drop_tenant(tenant_id: str) -> int:
+    """Delete this tenant's database file (and its write-ahead log). Returns files removed."""
+    p = _path(tenant_id)
+    n = 0
+    for f in (p, p.with_name(p.name + ".wal")):
+        if f.exists():
+            f.unlink()
+            n += 1
+    return n

@@ -28,6 +28,8 @@ class Backend(Protocol):
     def build_fact_sales(self, tenant_id: str, bronze_table: str, mapping: dict[str, str]) -> dict: ...
     def build_dimension(self, tenant_id: str, bronze_table: str, role: str, mapping: dict[str, str]) -> dict: ...
     def tables(self, tenant_id: str) -> set[str]: ...
+    def export_table(self, tenant_id: str, table: str) -> tuple[list[str], list[tuple]]: ...
+    def drop_tenant(self, tenant_id: str) -> int: ...
     def query(self, tenant_id: str, sql: str, params: list) -> tuple[list[str], list[list]]: ...
     def scalar(self, tenant_id: str, sql: str) -> Any: ...
 
@@ -55,6 +57,12 @@ class DuckDBBackend:
 
     def tables(self, tenant_id):
         return duck.list_tables(tenant_id)
+
+    def export_table(self, tenant_id, table):
+        return duck.export_table(tenant_id, table)
+
+    def drop_tenant(self, tenant_id):
+        return duck.drop_tenant(tenant_id)
 
     def query(self, tenant_id, sql, params):
         s = get_settings()
@@ -219,6 +227,19 @@ class DatabricksBackend:
         with self._connect(tenant_id, False) as conn, conn.cursor() as cur:
             self._exec(cur, "SHOW TABLES")
             return {r[1] for r in cur.fetchall()}  # columns: database, tableName, isTemporary
+
+    def export_table(self, tenant_id, table):
+        table = _ident(table)
+        with self._connect(tenant_id, False) as conn, conn.cursor() as cur:
+            self._exec(cur, f"SELECT * FROM {table}")
+            return [d[0] for d in cur.description], [tuple(r) for r in cur.fetchall()]
+
+    def drop_tenant(self, tenant_id):
+        """Drop the tenant's whole schema (all tables and views). Needs the write principal."""
+        schema = self.schema(tenant_id)
+        with self._connect(tenant_id, True) as conn, conn.cursor() as cur:
+            self._exec(cur, f"DROP SCHEMA IF EXISTS {schema} CASCADE")
+        return 1
 
     def query(self, tenant_id, sql, params):
         named_sql, named = self.to_named(sql, params)
