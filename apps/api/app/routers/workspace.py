@@ -31,7 +31,9 @@ class ReportIn(BaseModel):
 def create_report(body: ReportIn, p: Principal = Depends(require_writer), db: Session = Depends(get_db)):
     approved = {x.name: x.description for x in db.scalars(select(m.Metric).where(
         m.Metric.tenant_id == p.tenant_id, m.Metric.status == "approved"))}
-    res = make_plan(body.question, approved)
+    unapproved = {x.name: x.description for x in db.scalars(select(m.Metric).where(
+        m.Metric.tenant_id == p.tenant_id, m.Metric.status != "approved"))}
+    res = make_plan(body.question, approved, unapproved)
     if res.outcome != "plan":
         raise HTTPException(422, res.message or "That question cannot be saved as a report")
     try:

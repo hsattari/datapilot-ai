@@ -253,13 +253,15 @@ def approve_metric(name: str, p: Principal = Depends(require_admin), db: Session
 def analytics_query(body: QuestionIn, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     approved = {x.name: x.description for x in db.scalars(select(m.Metric).where(
         m.Metric.tenant_id == p.tenant_id, m.Metric.status == "approved"))}
-    res = make_plan(body.question, approved)
+    unapproved = {x.name: x.description for x in db.scalars(select(m.Metric).where(
+        m.Metric.tenant_id == p.tenant_id, m.Metric.status != "approved"))}
+    res = make_plan(body.question, approved, unapproved)
     if res.outcome != "plan":
         db.add(m.AnalyticalQuery(tenant_id=p.tenant_id, user_id=p.user_id, question=body.question[:1000],
                                  outcome=res.outcome))
         audit(db, p, f"query.{res.outcome}")
         db.commit()
-        return {"outcome": res.outcome, "message": res.message}
+        return {"outcome": res.outcome, "message": res.message, "planner": res.source}
     try:
         out = run_plan(db, p, res.plan)
     except QueryRejected as e:
@@ -273,7 +275,7 @@ def analytics_query(body: QuestionIn, p: Principal = Depends(get_principal), db:
                              plan=res.plan.model_dump(), sql_text=out["sql"], outcome="answered"))
     audit(db, p, "query.answered", metric=res.plan.metric)
     db.commit()
-    return {"outcome": "answered", "plan": res.plan.model_dump(), **out}
+    return {"outcome": "answered", "plan": res.plan.model_dump(), "planner": res.source, **out}
 
 
 @app.get("/api/v1/dashboard")
