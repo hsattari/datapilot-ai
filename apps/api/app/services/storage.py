@@ -61,7 +61,21 @@ class AdlsStorage:
         self.fs = svc.get_file_system_client(filesystem)
 
     def put(self, key: str, data: bytes) -> None:
-        self.fs.get_file_client(key).upload_data(data, overwrite=False)
+        from azure.core import MatchConditions
+
+        key = key.strip("/")
+        if not key or ".." in key:
+            raise ValueError("Invalid storage key")
+        parent = key.rpartition("/")[0]
+        if parent:
+            # Gen2 with a hierarchical namespace: create the folders explicitly (idempotent).
+            self.fs.get_directory_client(parent).create_directory()
+        f = self.fs.get_file_client(key)
+        # IfMissing = refuse to overwrite: raw files are immutable.
+        f.create_file(match_condition=MatchConditions.IfMissing)
+        if data:
+            f.append_data(data, offset=0, length=len(data))
+        f.flush_data(len(data))
 
     def get(self, key: str) -> bytes:
         return self.fs.get_file_client(key).download_file().readall()
