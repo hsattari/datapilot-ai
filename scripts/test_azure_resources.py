@@ -83,30 +83,55 @@ else:
 
 
 # ---------------------------------------------------------------- ADLS Gen2
-def adls():
+# One check per operation, so a failure says exactly which call the storage service refused.
+store = None
+base = f"selftest/{uuid.uuid4().hex}"
+key, payload = f"{base}/hello.csv", b"order_id,net_sales\nA,1\n"
+
+
+def adls_client():
+    global store
     if not s.adls_account_url:
         raise RuntimeError("ADLS_ACCOUNT_URL is empty in .env (terraform output adls_account_url)")
     store = AdlsStorage(s.adls_account_url, s.adls_filesystem)
-    base = f"selftest/{uuid.uuid4().hex}"
-    key, payload = f"{base}/hello.csv", b"order_id,net_sales\nA,1\n"
+    return f"{s.adls_account_url.split('//')[-1]} / {s.adls_filesystem}"
+
+
+def fs_exists():
+    props = store.fs.get_file_system_properties()
+    return f"file system '{props.name}' exists"
+
+
+def write():
     store.put(key, payload)
+    return key.split("/")[0] + "/..."
+
+
+def read_back():
     if store.get(key) != payload:
         raise RuntimeError("read-back differs from what was written")
+
+
+def overwrite_refused():
     try:
         store.put(key, b"changed")
-    except Exception:  # noqa: BLE001
-        immutable = True
-    else:
-        immutable = False
-    removed = store.delete_prefix(base)
-    if not immutable:
-        raise RuntimeError("a raw object could be overwritten (raw files must be immutable)")
-    if removed != 1:
-        raise RuntimeError(f"delete_prefix removed {removed} files, expected 1")
-    return "write, read back, overwrite refused, delete"
+    except Exception as e:  # noqa: BLE001
+        return type(e).__name__
+    raise RuntimeError("a raw object could be overwritten (raw files must be immutable)")
 
 
-step("ADLS Gen2: raw-storage backend", adls)
+def delete():
+    n = store.delete_prefix(base)
+    if n != 1:
+        raise RuntimeError(f"delete_prefix removed {n} files, expected 1")
+
+
+if step("ADLS Gen2: sign in and open client", adls_client):
+    if step("ADLS Gen2: file system exists", fs_exists):
+        if step("ADLS Gen2: write a file (creates parent folders)", write):
+            step("ADLS Gen2: read it back", read_back)
+            step("ADLS Gen2: overwrite is refused (immutable raw data)", overwrite_refused)
+            step("ADLS Gen2: delete the folder", delete)
 
 print("\nALL PASSED" if ok_all else "\nSOME CHECKS FAILED")
 sys.exit(0 if ok_all else 1)
