@@ -1,7 +1,8 @@
-# Starter-profile Azure infrastructure.
-# Verified: the syntax parses and is formatted (`tofu fmt`, OpenTofu 1.8). NOT verified: provider schema (`validate`),
-# `plan` or `apply` - the build sandbox cannot download the azurerm provider. Run `terraform init && terraform
-# validate && terraform plan` yourself and review SKUs, networking (private endpoints) and policies before use.
+# Starter-profile Azure DATA infrastructure: storage (ADLS Gen2), PostgreSQL, logging, Application Insights.
+# Verified by the project owner: `terraform init` and `terraform validate` pass (Terraform 1.16.6, azurerm 4.81.0).
+# NOT yet verified: `plan` / `apply`. NOT included yet: hosting for the API, worker and web app (Container Apps),
+# Key Vault, private networking and the ClamAV scanner - so applying this does not by itself give you a running app.
+# Review SKUs, networking and policies before use.
 terraform {
   required_version = ">= 1.5"
   required_providers {
@@ -30,6 +31,12 @@ variable "prefix" {
     condition     = can(regex("^[a-z0-9]{3,12}$", var.prefix))
     error_message = "prefix must be 3-12 lower-case letters or digits."
   }
+}
+
+variable "create_openai" {
+  type        = bool
+  default     = false
+  description = "Create a new Azure OpenAI resource. Leave false if you already have one (the app only needs its endpoint, key and deployment names)."
 }
 
 variable "pg_admin_password" {
@@ -69,6 +76,13 @@ resource "azurerm_postgresql_flexible_server" "meta" {
   storage_mb             = 32768
 }
 
+resource "azurerm_postgresql_flexible_server_database" "app" {
+  name      = "datapilot"
+  server_id = azurerm_postgresql_flexible_server.meta.id
+  charset   = "UTF8"
+  collation = "en_US.utf8"
+}
+
 resource "azurerm_log_analytics_workspace" "logs" {
   name                = "${var.prefix}-logs"
   resource_group_name = azurerm_resource_group.rg.name
@@ -85,11 +99,13 @@ resource "azurerm_application_insights" "ai" {
 }
 
 resource "azurerm_cognitive_account" "openai" {
-  name                = "${var.prefix}-openai"
-  resource_group_name = azurerm_resource_group.rg.name
-  location            = var.location
-  kind                = "OpenAI"
-  sku_name            = "S0"
+  count                 = var.create_openai ? 1 : 0
+  name                  = "${var.prefix}-openai"
+  custom_subdomain_name = "${var.prefix}-openai-${substr(md5(azurerm_resource_group.rg.id), 0, 6)}"
+  resource_group_name   = azurerm_resource_group.rg.name
+  location              = var.location
+  kind                  = "OpenAI"
+  sku_name              = "S0"
   # Model deployments are created separately; verify regional model availability.
 }
 
@@ -107,5 +123,5 @@ output "applicationinsights_connection_string" {
 }
 
 output "openai_endpoint" {
-  value = azurerm_cognitive_account.openai.endpoint
+  value = try(azurerm_cognitive_account.openai[0].endpoint, null)
 }
