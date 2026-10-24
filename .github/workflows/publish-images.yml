@@ -1,0 +1,47 @@
+name: publish-images
+# Builds the API and web images on GitHub and pushes them to your Azure Container Registry.
+# Manual only (Actions tab > publish-images > Run workflow). Needs three repository secrets:
+#   ACR_NAME           e.g. datapilotacrb0215f
+#   ACR_CLIENT_ID      app id of a service principal that has only the AcrPush role on that registry
+#   ACR_CLIENT_SECRET  its password
+# See docs/operations/azure-starter-deploy.md (Part 2, step 2).
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Image tag
+        default: latest
+      api_internal_url:
+        description: Name the web app uses to reach the API (http://<prefix>-api)
+        default: http://datapilot-api
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Sign in to the registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.ACR_NAME }}.azurecr.io
+          username: ${{ secrets.ACR_CLIENT_ID }}
+          password: ${{ secrets.ACR_CLIENT_SECRET }}
+      - name: Build and push API
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infrastructure/docker/api.Dockerfile
+          push: true
+          tags: ${{ secrets.ACR_NAME }}.azurecr.io/datapilot-api:${{ inputs.tag }}
+      - name: Build and push web
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infrastructure/docker/web.Dockerfile
+          build-args: API_URL=${{ inputs.api_internal_url }}
+          push: true
+          tags: ${{ secrets.ACR_NAME }}.azurecr.io/datapilot-web:${{ inputs.tag }}

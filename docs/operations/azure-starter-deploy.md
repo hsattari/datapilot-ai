@@ -56,15 +56,16 @@ terraform plan -var deploy_apps=true '-target=azurerm_container_registry.acr[0]'
 terraform apply -var deploy_apps=true '-target=azurerm_container_registry.acr[0]'
 ```
 
-2. Build and push the images in Azure (no local Docker needed). Run from the repo root:
+2. Build and push the images. `az acr build` is the simplest way, but Azure blocks ACR Tasks on some new or free-credit subscriptions (`TasksOperationsNotAllowed`). If that happens, use the GitHub workflow `publish-images`:
 
 ```powershell
-$acr = terraform -chdir=infrastructure/terraform output -raw acr_name
-az acr build -r $acr -t datapilot-api:latest -f infrastructure/docker/api.Dockerfile .
-az acr build -r $acr -t datapilot-web:latest -f infrastructure/docker/web.Dockerfile --build-arg API_URL=http://datapilot-api .
+$id = az acr show -n datapilotacrb0215f --query id -o tsv
+az ad sp create-for-rbac --name datapilot-acr-push --role AcrPush --scopes $id --query "{id:appId,secret:password}" -o json
 ```
 
-(`http://datapilot-api` is `<prefix>-api`; change it if you changed `prefix`.)
+Copy the two values straight into GitHub (repository > Settings > Secrets and variables > Actions > New repository secret) as `ACR_CLIENT_ID` and `ACR_CLIENT_SECRET`, and add `ACR_NAME` = `datapilotacrb0215f`. Do not paste them anywhere else. Then Actions > publish-images > Run workflow. The service principal can only push images to that one registry.
+
+(With ACR Tasks allowed, this works instead, from the repo root: `az acr build -r <acr> -t datapilot-api:latest -f infrastructure/docker/api.Dockerfile .` and the same for the web image with `--build-arg API_URL=http://datapilot-api`.)
 
 3. Apply everything and open the web address:
 
