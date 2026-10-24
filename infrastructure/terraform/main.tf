@@ -84,7 +84,8 @@ resource "azurerm_storage_data_lake_gen2_filesystem" "raw" {
 }
 
 resource "azurerm_postgresql_flexible_server" "meta" {
-  name                   = "${var.prefix}-pg"
+  # Server names are global (they become <name>.postgres.database.azure.com), so add a stable suffix like the storage account.
+  name                   = "${var.prefix}-pg-${substr(md5(azurerm_resource_group.rg.id), 0, 6)}"
   resource_group_name    = azurerm_resource_group.rg.name
   location               = var.location
   version                = "16"
