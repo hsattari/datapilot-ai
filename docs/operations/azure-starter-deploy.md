@@ -52,8 +52,8 @@ Known limits: PostgreSQL is public with TLS and an "allow Azure services" rule (
 $env:TF_VAR_jwt_secret = [Convert]::ToBase64String((1..48 | % { Get-Random -Maximum 256 }) -as [byte[]])
 $env:TF_VAR_mfa_encryption_key = [Convert]::ToBase64String((1..48 | % { Get-Random -Maximum 256 }) -as [byte[]])
 terraform validate
-terraform plan -var deploy_apps=true -target=azurerm_container_registry.acr
-terraform apply -var deploy_apps=true -target=azurerm_container_registry.acr
+terraform plan -var deploy_apps=true '-target=azurerm_container_registry.acr[0]'
+terraform apply -var deploy_apps=true '-target=azurerm_container_registry.acr[0]'
 ```
 
 2. Build and push the images in Azure (no local Docker needed). Run from the repo root:
