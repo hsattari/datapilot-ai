@@ -39,10 +39,28 @@ variable "create_openai" {
   description = "Create a new Azure OpenAI resource. Leave false if you already have one (the app only needs its endpoint, key and deployment names)."
 }
 
+variable "allowed_ip" {
+  type        = string
+  default     = ""
+  description = "Your public IPv4 address. Opens the PostgreSQL firewall to that one address (for testing from your laptop). Empty = nobody can connect."
+  validation {
+    condition     = var.allowed_ip == "" || can(regex("^([0-9]{1,3}\\.){3}[0-9]{1,3}$", var.allowed_ip))
+    error_message = "allowed_ip must be empty or an IPv4 address such as 203.0.113.7."
+  }
+}
+
+variable "log_daily_cap_gb" {
+  type        = number
+  default     = 1
+  description = "Daily ingestion cap (GB) for Log Analytics and Application Insights: a cost guard rail."
+}
+
 variable "pg_admin_password" {
   type      = string
   sensitive = true
 }
+
+data "azurerm_client_config" "current" {}
 
 resource "azurerm_resource_group" "rg" {
   name     = "${var.prefix}-rg"
@@ -76,6 +94,28 @@ resource "azurerm_postgresql_flexible_server" "meta" {
   storage_mb             = 32768
 }
 
+# Azure only allows CREATE EXTENSION for allow-listed extensions. Migration 0002 needs pgvector ("vector").
+resource "azurerm_postgresql_flexible_server_configuration" "extensions" {
+  name      = "azure.extensions"
+  server_id = azurerm_postgresql_flexible_server.meta.id
+  value     = "vector"
+}
+
+resource "azurerm_postgresql_flexible_server_firewall_rule" "me" {
+  count            = var.allowed_ip == "" ? 0 : 1
+  name             = "allowed-ip"
+  server_id        = azurerm_postgresql_flexible_server.meta.id
+  start_ip_address = var.allowed_ip
+  end_ip_address   = var.allowed_ip
+}
+
+# The API's ADLS backend signs in with Microsoft Entra (DefaultAzureCredential): the deploying user needs data access.
+resource "azurerm_role_assignment" "me_blob" {
+  scope                = azurerm_storage_account.lake.id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = data.azurerm_client_config.current.object_id
+}
+
 resource "azurerm_postgresql_flexible_server_database" "app" {
   name      = "datapilot"
   server_id = azurerm_postgresql_flexible_server.meta.id
@@ -88,6 +128,7 @@ resource "azurerm_log_analytics_workspace" "logs" {
   resource_group_name = azurerm_resource_group.rg.name
   location            = var.location
   retention_in_days   = 30
+  daily_quota_gb      = var.log_daily_cap_gb
 }
 
 resource "azurerm_application_insights" "ai" {
@@ -96,6 +137,8 @@ resource "azurerm_application_insights" "ai" {
   location            = var.location
   workspace_id        = azurerm_log_analytics_workspace.logs.id
   application_type    = "web"
+
+  daily_data_cap_in_gb = var.log_daily_cap_gb
 }
 
 resource "azurerm_cognitive_account" "openai" {
@@ -111,6 +154,14 @@ resource "azurerm_cognitive_account" "openai" {
 
 output "storage_account_name" {
   value = azurerm_storage_account.lake.name
+}
+
+output "adls_account_url" {
+  value = "https://${azurerm_storage_account.lake.name}.dfs.core.windows.net" # ADLS_ACCOUNT_URL in .env
+}
+
+output "database_url_template" {
+  value = "postgresql+psycopg2://datapilot:<password>@${azurerm_postgresql_flexible_server.meta.fqdn}:5432/datapilot?sslmode=require"
 }
 
 output "postgres_fqdn" {
