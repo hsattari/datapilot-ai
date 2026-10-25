@@ -50,9 +50,9 @@ with sync_playwright() as p:
 
     page.get_by_role("button", name="Data Sources").click()
     page.locator("input[type=file]").set_input_files(f"{REPO}/data/synthetic/orders_reference.csv")
-    expect(page.get_by_text("Ingested.")).to_be_visible(timeout=30000)
+    expect(page.get_by_test_id("upload-results")).to_contain_text("orders_reference.csv - ingested", timeout=30000)
     print("OK upload -> worker ingested")
-    page.get_by_text("orders_reference").first.click()
+    page.get_by_role("link", name="orders_reference").first.click()
     expect(page.get_by_text("Proposed mapping")).to_be_visible()
     page.screenshot(path=f"{S}/profile.png")
     page.get_by_role("button", name="Approve and build model").click()
@@ -90,8 +90,15 @@ with sync_playwright() as p:
     print("OK ask -> 140 with definition shown")
 
     page.get_by_role("button", name="Data Sources").click()
-    page.locator("input[type=file]").set_input_files(f"{REPO}/data/synthetic/products.csv")
-    expect(page.get_by_text("Ingested.")).to_be_visible(timeout=30000)
+    # Several files at once: an unsupported file first must fail on its own without stopping the real one.
+    import tempfile
+    bad = pathlib.Path(tempfile.mkdtemp()) / "notes.exe"
+    bad.write_bytes(b"MZ not a data file")
+    page.locator("input[type=file]").set_input_files([str(bad), f"{REPO}/data/synthetic/products.csv"])
+    expect(page.get_by_test_id("upload-results")).to_contain_text("products.csv - ingested", timeout=30000)
+    expect(page.get_by_test_id("upload-results")).to_contain_text("notes.exe - failed")
+    expect(page.get_by_text("2 files processed.")).to_be_visible()
+    print("OK two files at once: the unsupported one failed alone, the other was ingested")
     page.get_by_role("link", name="products", exact=True).click()
     expect(page.get_by_text("This looks like a products list")).to_be_visible()
     page.get_by_role("button", name="Approve as products list").click()

@@ -55,6 +55,7 @@ function Spark({ rows }: { rows: [string, number][] }) {
 
 function Sources() {
   const [msg, setMsg] = useState("");
+  const [results, setResults] = useState<{ name: string; status: string }[]>([]);
   const [datasets, setDatasets] = useState<any[]>([]);
   const [profile, setProfile] = useState<any>(null);
   const [quality, setQuality] = useState<any>(null);
@@ -63,20 +64,31 @@ function Sources() {
   const refresh = useCallback(() => api("/datasets").then(setDatasets), []);
   useEffect(() => { refresh().catch(() => {}); }, [refresh]);
 
-  const upload = async (file: File) => {
-    setMsg("Uploading…");
+  // One file: upload, then wait for the worker. Returns a short result for the list below the picker.
+  const uploadOne = async (file: File): Promise<string> => {
     try {
       const src = await api("/data-sources", { method: "POST", body: JSON.stringify({ name: file.name }) });
       const fd = new FormData(); fd.append("file", file);
       const up = await api(`/data-sources/${src.id}/uploads`, { method: "POST", body: fd });
-      for (let i = 0; i < 30; i++) {
+      for (let i = 0; i < 60; i++) {
         const j = await api(`/jobs/${up.job_id}`);
-        if (j.status === "succeeded") { setMsg("Ingested."); return refresh(); }
-        if (j.status === "failed") return setMsg(`Ingestion failed: ${j.error_message}`);
+        if (j.status === "succeeded") return "ingested";
+        if (j.status === "failed") return `failed: ${j.error_message}`;
         await new Promise(r => setTimeout(r, 1000));
       }
-      setMsg("Still processing — check back shortly.");
-    } catch (e: any) { setMsg(e.message); }
+      return "still processing - check back shortly";
+    } catch (e: any) { return `failed: ${e.message}`; }
+  };
+  // Several files: one after another (keeps within the upload rate limit); a failure does not stop the rest.
+  const uploadMany = async (files: File[]) => {
+    setMsg(""); setResults(files.map(f => ({ name: f.name, status: "waiting" })));
+    for (let i = 0; i < files.length; i++) {
+      setResults(r => r.map((x, k) => k === i ? { ...x, status: "uploading…" } : x));
+      const status = await uploadOne(files[i]);
+      setResults(r => r.map((x, k) => k === i ? { ...x, status } : x));
+      refresh().catch(() => {});
+    }
+    setMsg(`${files.length} file${files.length === 1 ? "" : "s"} processed.`);
   };
   const open = async (id: string) => {
     setProfile(await api(`/datasets/${id}/profile`));
@@ -98,7 +110,12 @@ function Sources() {
     catch (e: any) { setMsg(e.message); }
   };
   return (<>
-    <div style={card}><input type="file" accept=".csv,.xlsx,.txt,.json,.jsonl" onChange={e => e.target.files?.[0] && upload(e.target.files[0])} /> <span>{msg}</span></div>
+    <div style={card}>
+      <input type="file" multiple accept=".csv,.xlsx,.txt,.json,.jsonl" aria-label="Choose files to upload"
+        onChange={e => { const fs = Array.from(e.target.files || []); e.target.value = ""; if (fs.length) uploadMany(fs); }} /> <span>{msg}</span>
+      {results.length > 0 && <ul data-testid="upload-results" style={{ margin: "8px 0 0", paddingLeft: 18 }}>
+        {results.map((r, i) => <li key={i}>{r.name} - {r.status}</li>)}</ul>}
+    </div>
     <div style={card}>{datasets.map(d => <div key={d.id}><a href="#" onClick={e => { e.preventDefault(); open(d.id); }}>{d.name}</a> — {d.rows} rows — {d.model_status}{d.role && d.role !== "fact_sales" ? ` (${d.role === "dim_product" ? "products" : "customers"} list)` : ""}</div>)}</div>
     {profile && <div style={card}>
       <h3>{profile.name}</h3>
