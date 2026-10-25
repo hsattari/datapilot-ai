@@ -53,8 +53,14 @@ function Spark({ rows }: { rows: [string, number][] }) {
   return <svg width={300} height={64} role="img" aria-label="trend by month"><polyline fill="none" stroke="#2563eb" strokeWidth={2} points={pts} /></svg>;
 }
 
+const FACT_FIELDS: [string, string][] = [
+  ["order_id", "Order ID"], ["order_date", "Order date"], ["net_sales", "Net sales (revenue)"],
+  ["cost_of_goods_sold", "Cost of goods sold"], ["product", "Product"], ["region", "Region"], ["customer", "Customer"],
+];
+
 function Sources() {
   const [msg, setMsg] = useState("");
+  const [mapping, setMapping] = useState<Record<string, string>>({});
   const [results, setResults] = useState<{ name: string; status: string }[]>([]);
   const [datasets, setDatasets] = useState<any[]>([]);
   const [profile, setProfile] = useState<any>(null);
@@ -91,15 +97,17 @@ function Sources() {
     setMsg(`${files.length} file${files.length === 1 ? "" : "s"} processed.`);
   };
   const open = async (id: string) => {
-    setProfile(await api(`/datasets/${id}/profile`));
+    const pr = await api(`/datasets/${id}/profile`);
+    setMapping(Object.fromEntries(Object.entries<any>(pr.profile.suggested_mapping || {})
+      .filter(([, v]) => !v.needs_clarification).map(([k, v]) => [k, v.column])));
+    setProfile(pr);
     setQuality(await api(`/datasets/${id}/quality`).catch(() => null));
     setVersions((await api(`/datasets/${id}/schema-versions`).catch(() => ({ versions: [] }))).versions);
     setRels((await api("/relationships").catch(() => ({ relationships: [] }))).relationships);
   };
   const approve = async () => {
-    const mapping = Object.fromEntries(Object.entries<any>(profile.profile.suggested_mapping)
-      .filter(([, v]) => !v.needs_clarification).map(([k, v]) => [k, v.column]));
-    try { const r = await api(`/datasets/${profile.id}/approve`, { method: "POST", body: JSON.stringify({ mapping }) });
+    const chosen = Object.fromEntries(Object.entries(mapping).filter(([, v]) => v));
+    try { const r = await api(`/datasets/${profile.id}/approve`, { method: "POST", body: JSON.stringify({ mapping: chosen }) });
       setMsg(`Model built: ${r.rows_loaded} rows loaded, ${r.rows_rejected} quarantined.`); refresh(); open(profile.id); }
     catch (e: any) { setMsg(e.message); }
   };
@@ -122,7 +130,19 @@ function Sources() {
       <table><thead><tr><th>Column</th><th>Type</th><th>Nulls</th><th>Distinct</th></tr></thead>
         <tbody>{profile.profile.columns.map((c: any) => <tr key={c.name}><td>{c.name}</td><td>{c.type}</td><td>{c.null_count}</td><td>{c.distinct}</td></tr>)}</tbody></table>
       <h4>Proposed mapping</h4>
-      {Object.entries<any>(profile.profile.suggested_mapping).map(([k, v]) => <div key={k}>{k} ← {v.column} ({Math.round(v.confidence * 100)}%) {v.needs_clarification && <b style={{ color: "#b00020" }}>{v.needs_clarification}</b>}</div>)}
+      {!profile.profile.suggested_dimension && <div data-testid="mapping">
+        <p>Match each field to a column in this file. Gross profit needs a cost column; leave a field on "not in this file" if there is none.</p>
+        {FACT_FIELDS.map(([k, label]) => { const sug = profile.profile.suggested_mapping?.[k]; return (
+          <div key={k} style={{ margin: "4px 0" }}>
+            <label>{label}: <select aria-label={label} value={mapping[k] || ""} onChange={e => setMapping(m => ({ ...m, [k]: e.target.value }))}>
+              <option value="">not in this file</option>
+              {profile.profile.columns.map((c: any) => <option key={c.name} value={c.name}>{c.name}</option>)}
+            </select></label>
+            {sug && !sug.needs_clarification && mapping[k] === sug.column && <span> suggested ({Math.round(sug.confidence * 100)}%)</span>}
+            {sug?.needs_clarification && <b style={{ color: "#b00020" }}> {sug.needs_clarification}</b>}
+          </div>); })}
+      </div>}
+      {profile.profile.suggested_dimension && Object.entries<any>(profile.profile.suggested_mapping).map(([k, v]) => <div key={k}>{k} ← {v.column} ({Math.round(v.confidence * 100)}%)</div>)}
       {profile.profile.suggested_dimension && <>
         <h4>This looks like a {profile.profile.suggested_dimension.label.toLowerCase()} list</h4>
         <div>{Object.entries<string>(profile.profile.suggested_dimension.mapping).map(([k, v]) => <div key={k}>{k} ← {v}</div>)}</div>

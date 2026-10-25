@@ -54,6 +54,8 @@ with sync_playwright() as p:
     print("OK upload -> worker ingested")
     page.get_by_role("link", name="orders_reference").first.click()
     expect(page.get_by_text("Proposed mapping")).to_be_visible()
+    expect(page.get_by_label("Cost of goods sold")).to_have_value("cost")   # suggested, and changeable by the person
+    expect(page.get_by_label("Net sales (revenue)")).to_have_value("net_sales")
     page.screenshot(path=f"{S}/profile.png")
     page.get_by_role("button", name="Approve and build model").click()
     expect(page.get_by_text("Model built: 3 rows loaded, 0 quarantined.")).to_be_visible(timeout=15000)
