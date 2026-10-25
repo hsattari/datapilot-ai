@@ -185,7 +185,7 @@ resource "azurerm_container_app" "clamav" {
     container {
       name   = "clamav"
       image  = "docker.io/clamav/clamav:stable"
-      cpu    = 1.0
+      cpu    = 1.5 # Container Apps only accepts fixed pairs: 1.5 CPU goes with 3 GiB
       memory = "3Gi" # signatures are held in memory
     }
   }

@@ -93,6 +93,11 @@ resource "azurerm_postgresql_flexible_server" "meta" {
   administrator_password = var.pg_admin_password
   sku_name               = "B_Standard_B1ms"
   storage_mb             = 32768
+
+  lifecycle {
+    # Azure picks an availability zone when none is set; the provider then wants to "change" it, which Azure refuses.
+    ignore_changes = [zone]
+  }
 }
 
 # Azure only allows CREATE EXTENSION for allow-listed extensions. Migration 0002 needs pgvector ("vector").
