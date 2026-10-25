@@ -52,8 +52,36 @@ variable "mfa_encryption_key" {
   }
 }
 
+variable "azure_openai_endpoint" {
+  type        = string
+  default     = ""
+  description = "Azure OpenAI endpoint, e.g. https://datapilot.openai.azure.com/. Empty = the planner uses its rule-based fallback."
+}
+
+variable "azure_openai_deployment" {
+  type        = string
+  default     = ""
+  description = "Chat deployment name used by the planner (e.g. gpt-4.1-mini)."
+}
+
+variable "azure_openai_embedding_deployment" {
+  type        = string
+  default     = ""
+  description = "Optional embedding deployment (text-embedding-3-large) for document search. Empty = keyword search only."
+}
+
+variable "azure_openai_api_key" {
+  type        = string
+  sensitive   = true
+  default     = ""
+  description = "Key for the Azure OpenAI resource. Stored in Key Vault. Set with TF_VAR_azure_openai_api_key."
+}
+
 locals {
   apps_enabled = var.deploy_apps ? 1 : 0
+  # Decided from non-secret inputs only (Terraform cannot use a sensitive value to decide how many resources exist).
+  openai_enabled = var.azure_openai_endpoint != "" && var.azure_openai_deployment != ""
+  openai_count   = var.deploy_apps && local.openai_enabled ? 1 : 0
   suffix       = substr(md5(azurerm_resource_group.rg.id), 0, 6)
   api_name     = "${var.prefix}-api"
   clam_name    = "${var.prefix}-clamav"
@@ -70,6 +98,10 @@ resource "terraform_data" "apps_guard" {
     precondition {
       condition     = var.jwt_secret != "" && var.mfa_encryption_key != "" && var.jwt_secret != var.mfa_encryption_key
       error_message = "With deploy_apps = true, set TF_VAR_jwt_secret and TF_VAR_mfa_encryption_key to two different random strings of 32+ characters."
+    }
+    precondition {
+      condition     = !local.openai_enabled || var.azure_openai_api_key != ""
+      error_message = "azure_openai_endpoint and azure_openai_deployment are set, so set TF_VAR_azure_openai_api_key too (or clear them)."
     }
   }
 }
@@ -142,6 +174,14 @@ resource "azurerm_key_vault_secret" "mfa" {
   count        = local.apps_enabled
   name         = "mfa-encryption-key"
   value        = var.mfa_encryption_key
+  key_vault_id = azurerm_key_vault.kv[0].id
+  depends_on   = [azurerm_role_assignment.me_kv, terraform_data.apps_guard]
+}
+
+resource "azurerm_key_vault_secret" "openai" {
+  count        = local.openai_count
+  name         = "azure-openai-api-key"
+  value        = var.azure_openai_api_key
   key_vault_id = azurerm_key_vault.kv[0].id
   depends_on   = [azurerm_role_assignment.me_kv, terraform_data.apps_guard]
 }
@@ -233,6 +273,14 @@ resource "azurerm_container_app" "api" {
     key_vault_secret_id = azurerm_key_vault_secret.mfa[0].versionless_id
     identity            = azurerm_user_assigned_identity.apps[0].id
   }
+  dynamic "secret" {
+    for_each = local.openai_enabled ? [1] : []
+    content {
+      name                = "openai-key"
+      key_vault_secret_id = azurerm_key_vault_secret.openai[0].versionless_id
+      identity            = azurerm_user_assigned_identity.apps[0].id
+    }
+  }
 
   template {
     min_replicas = 1
@@ -287,6 +335,24 @@ resource "azurerm_container_app" "api" {
       env {
         name  = "TRUST_PROXY_HEADERS" # the API is reachable only through the web app's proxy
         value = "true"
+      }
+      dynamic "env" {
+        for_each = local.openai_enabled ? {
+          AZURE_OPENAI_ENDPOINT                = var.azure_openai_endpoint
+          AZURE_OPENAI_DEPLOYMENT              = var.azure_openai_deployment
+          AZURE_OPENAI_EMBEDDING_DEPLOYMENT    = var.azure_openai_embedding_deployment
+        } : {}
+        content {
+          name  = env.key
+          value = env.value
+        }
+      }
+      dynamic "env" {
+        for_each = local.openai_enabled ? [1] : []
+        content {
+          name        = "AZURE_OPENAI_API_KEY"
+          secret_name = "openai-key"
+        }
       }
       env {
         name  = "APPLICATIONINSIGHTS_CONNECTION_STRING"
@@ -344,6 +410,14 @@ resource "azurerm_container_app" "worker" {
     key_vault_secret_id = azurerm_key_vault_secret.mfa[0].versionless_id
     identity            = azurerm_user_assigned_identity.apps[0].id
   }
+  dynamic "secret" {
+    for_each = local.openai_enabled ? [1] : []
+    content {
+      name                = "openai-key"
+      key_vault_secret_id = azurerm_key_vault_secret.openai[0].versionless_id
+      identity            = azurerm_user_assigned_identity.apps[0].id
+    }
+  }
 
   template {
     min_replicas = 1
@@ -394,6 +468,24 @@ resource "azurerm_container_app" "worker" {
       env {
         name  = "CLAMAV_HOST"
         value = local.clam_name
+      }
+      dynamic "env" {
+        for_each = local.openai_enabled ? {
+          AZURE_OPENAI_ENDPOINT                = var.azure_openai_endpoint
+          AZURE_OPENAI_DEPLOYMENT              = var.azure_openai_deployment
+          AZURE_OPENAI_EMBEDDING_DEPLOYMENT    = var.azure_openai_embedding_deployment
+        } : {}
+        content {
+          name  = env.key
+          value = env.value
+        }
+      }
+      dynamic "env" {
+        for_each = local.openai_enabled ? [1] : []
+        content {
+          name        = "AZURE_OPENAI_API_KEY"
+          secret_name = "openai-key"
+        }
       }
       env {
         name  = "APPLICATIONINSIGHTS_CONNECTION_STRING"
