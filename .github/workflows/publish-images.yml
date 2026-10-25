@@ -24,6 +24,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
+      - name: Check the secrets are set (prints names only, never values)
+        env:
+          ACR_NAME: ${{ secrets.ACR_NAME }}
+          ACR_CLIENT_ID: ${{ secrets.ACR_CLIENT_ID }}
+          ACR_CLIENT_SECRET: ${{ secrets.ACR_CLIENT_SECRET }}
+        run: |
+          missing=0
+          for n in ACR_NAME ACR_CLIENT_ID ACR_CLIENT_SECRET; do
+            if [ -z "${!n}" ]; then echo "::error::Repository secret $n is empty or missing (Settings > Secrets and variables > Actions > Secrets > Repository secrets)"; missing=1; else echo "$n is set (${#n} chars in the name, value hidden)"; fi
+          done
+          exit $missing
       - name: Sign in to the registry
         uses: docker/login-action@v3
         with:
