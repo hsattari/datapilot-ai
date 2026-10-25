@@ -42,7 +42,7 @@ What it adds: container registry (Basic), Key Vault (JWT secret, MFA key, databa
 
 Extra cost, roughly: Container Apps (4 always-on replicas, ClamAV needs 3 GiB), registry (Basic is a few USD a month), Key Vault (cents). Expect tens of USD a month on top of Part 1 - check the Azure pricing calculator before applying, and destroy when finished.
 
-Known limits: PostgreSQL is public with TLS and an "allow Azure services" rule (private networking is the next step); default `*.azurecontainerapps.io` address, no custom domain or WAF; no Entra sign-in button in the web UI yet; Azure OpenAI and Databricks settings are not wired in (the planner uses its rule-based fallback).
+Known limits: analytics files (DuckDB) live on an Azure Files share (SMB, no byte-range locks, account key in Terraform state); PostgreSQL is public with TLS and an "allow Azure services" rule (private networking is the next step); default `*.azurecontainerapps.io` address, no custom domain or WAF; no Entra sign-in button in the web UI yet; Azure OpenAI and Databricks settings are not wired in (the planner uses its rule-based fallback).
 
 ### Steps (PowerShell, in `infrastructure\terraform`)
 

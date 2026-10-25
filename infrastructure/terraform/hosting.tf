@@ -211,6 +211,37 @@ resource "azurerm_container_app_environment" "env" {
   log_analytics_workspace_id = azurerm_log_analytics_workspace.logs.id
 }
 
+# ---- Shared analytics files (DuckDB): the worker writes, the API reads, so both mount the same Azure Files share ----
+# A separate Standard account: the data-lake account (hierarchical namespace) cannot host file shares.
+# Mounting needs the account key; it is kept in Terraform state (sensitive) - another reason to protect the state file.
+resource "azurerm_storage_account" "files" {
+  count                           = local.apps_enabled
+  name                            = "${var.prefix}files${local.suffix}"
+  resource_group_name             = azurerm_resource_group.rg.name
+  location                        = azurerm_resource_group.rg.location
+  account_tier                    = "Standard"
+  account_replication_type        = "LRS"
+  min_tls_version                 = "TLS1_2"
+  allow_nested_items_to_be_public = false
+}
+
+resource "azurerm_storage_share" "analytics" {
+  count              = local.apps_enabled
+  name               = "analytics"
+  storage_account_id = azurerm_storage_account.files[0].id
+  quota              = 20
+}
+
+resource "azurerm_container_app_environment_storage" "analytics" {
+  count                        = local.apps_enabled
+  name                         = "analytics"
+  container_app_environment_id = azurerm_container_app_environment.env[0].id
+  account_name                 = azurerm_storage_account.files[0].name
+  share_name                   = azurerm_storage_share.analytics[0].name
+  access_key                   = azurerm_storage_account.files[0].primary_access_key
+  access_mode                  = "ReadWrite"
+}
+
 # ---- ClamAV: internal TCP only; the API refuses uploads if it cannot reach it (fail-closed) ----
 resource "azurerm_container_app" "clamav" {
   count                        = local.apps_enabled
@@ -285,6 +316,13 @@ resource "azurerm_container_app" "api" {
   template {
     min_replicas = 1
     max_replicas = 2
+    volume {
+      name         = "analytics"
+      storage_type = "AzureFile"
+      storage_name = azurerm_container_app_environment_storage.analytics[0].name
+      # nobrl: SMB shares do not support byte-range locks; the worker and API open the file one after the other.
+      mount_options = "dir_mode=0777,file_mode=0666,nobrl"
+    }
     container {
       name    = "api"
       image   = "${azurerm_container_registry.acr[0].login_server}/datapilot-api:${var.api_image_tag}"
@@ -292,9 +330,18 @@ resource "azurerm_container_app" "api" {
       memory  = "1Gi"
       command = ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
 
+      volume_mounts {
+        name = "analytics"
+        path = "/data/analytics"
+      }
+
       env {
         name  = "ENVIRONMENT"
         value = "production"
+      }
+      env {
+        name  = "ANALYTICS_PATH"
+        value = "/data/analytics"
       }
       env {
         name        = "DATABASE_URL"
@@ -422,6 +469,13 @@ resource "azurerm_container_app" "worker" {
   template {
     min_replicas = 1
     max_replicas = 1
+    volume {
+      name         = "analytics"
+      storage_type = "AzureFile"
+      storage_name = azurerm_container_app_environment_storage.analytics[0].name
+      # nobrl: SMB shares do not support byte-range locks; the worker and API open the file one after the other.
+      mount_options = "dir_mode=0777,file_mode=0666,nobrl"
+    }
     container {
       name    = "worker"
       image   = "${azurerm_container_registry.acr[0].login_server}/datapilot-api:${var.api_image_tag}"
@@ -429,9 +483,18 @@ resource "azurerm_container_app" "worker" {
       memory  = "1Gi"
       command = ["python", "-m", "app.worker"]
 
+      volume_mounts {
+        name = "analytics"
+        path = "/data/analytics"
+      }
+
       env {
         name  = "ENVIRONMENT"
         value = "production"
+      }
+      env {
+        name  = "ANALYTICS_PATH"
+        value = "/data/analytics"
       }
       env {
         name        = "DATABASE_URL"
