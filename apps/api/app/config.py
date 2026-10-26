@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     databricks_readonly_token: str = ""   # SELECT-only principal for the query path (recommended)
     databricks_catalog: str = ""
 
+    # New organisations build models and approve the built-in metrics automatically when columns are recognised.
+    auto_model_default: bool = True
+
     # Upload limits
     max_upload_mb: int = 25
     max_sheet_rows: int = 1_000_000

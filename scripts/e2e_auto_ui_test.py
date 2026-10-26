@@ -1,0 +1,65 @@
+"""Browser test of automatic modelling (server default: AUTO_MODEL_DEFAULT=true). Needs API, worker and web running:
+    python scripts/e2e_auto_ui_test.py [screenshot_dir]
+Registers, uploads a sales file and a products file together, and checks that with no further clicks the dashboard shows
+Net Revenue 350 and Gross Profit 140, Gross Profit is Approved, the category join works, and an ambiguous file asks."""
+import os, pathlib, sys, tempfile, time
+from playwright.sync_api import sync_playwright, expect
+
+REPO = str(pathlib.Path(__file__).resolve().parents[1])
+S = sys.argv[1] if len(sys.argv) > 1 else "."
+EMAIL, PW = f"auto{int(time.time())}@test.example", "correct-horse-1"
+errors = []
+with sync_playwright() as p:
+    kw = {"executable_path": os.environ["CHROMIUM_PATH"]} if os.environ.get("CHROMIUM_PATH") else {}
+    b = p.chromium.launch(args=["--no-sandbox"], **kw)
+    page = b.new_page(viewport={"width": 1100, "height": 800})
+    page.on("pageerror", lambda e: errors.append(f"pageerror: {e}"))
+    page.goto("http://localhost:3000")
+    page.get_by_placeholder("Organisation").fill("Auto Ltd")
+    page.get_by_placeholder("Email").fill(EMAIL)
+    page.get_by_placeholder("Password (10+ chars)").fill(PW)
+    page.get_by_role("button", name="Create workspace").click()
+    expect(page.get_by_role("button", name="Data Sources")).to_be_visible(timeout=10000)
+
+    page.get_by_role("button", name="Data Sources").click()
+    page.locator("input[type=file]").set_input_files(
+        [f"{REPO}/data/synthetic/orders_reference.csv", f"{REPO}/data/synthetic/products.csv"])
+    res = page.get_by_test_id("upload-results")
+    expect(res).to_contain_text("orders_reference.csv - ingested and set up automatically", timeout=40000)
+    expect(res).to_contain_text("products.csv - ingested and set up automatically", timeout=40000)
+    page.screenshot(path=f"{S}/auto_upload.png")
+    print("OK two files uploaded together were detected and set up with no further clicks")
+
+    page.get_by_role("button", name="Business Metrics").click()
+    expect(page.locator("tr[data-metric=gross_profit]")).to_contain_text("Approved", timeout=10000)
+    print("OK gross profit is already approved")
+
+    page.get_by_role("button", name="Home").click()
+    expect(page.get_by_text("Net Revenue: 350")).to_be_visible(timeout=10000)
+    expect(page.get_by_text("Gross Profit: 140")).to_be_visible(timeout=10000)
+    print("OK dashboard shows Net Revenue 350 and Gross Profit 140")
+
+    page.get_by_role("button", name="Ask Your Data").click()
+    page.get_by_placeholder("e.g. Why has gross profit").fill("net revenue by category")
+    page.get_by_role("button", name="Ask", exact=True).click()
+    expect(page.get_by_text("How this was calculated")).to_be_visible(timeout=10000)
+    cells = page.locator("table td").all_inner_texts()
+    assert cells[:4] == ["Accessories", "200", "Hardware", "150"], cells
+    print("OK category question answered through the automatic join")
+
+    # an ambiguous file is not guessed: it waits for a person
+    amb = pathlib.Path(tempfile.mkdtemp()) / "mystery.csv"
+    amb.write_text("order_id,order_date,amount\nA,2026-01-01,10\nB,2026-01-02,20\n")
+    page.get_by_role("button", name="Data Sources").click()
+    page.locator("input[type=file]").set_input_files(str(amb))
+    expect(page.get_by_test_id("upload-results")).to_contain_text("mystery.csv - ingested - needs your check", timeout=30000)
+    page.get_by_role("link", name="mystery", exact=True).click()
+    expect(page.get_by_test_id("auto-review")).to_be_visible()
+    print("OK an ambiguous 'amount' column is not guessed: it asks the person")
+
+    page.get_by_role("button", name="Settings").click()
+    expect(page.get_by_label("Build models and approve standard metrics automatically")).to_be_checked(timeout=10000)
+    print("OK the setting is on by default and visible in Settings")
+    b.close()
+print("JS errors:", errors or "none")
+sys.exit(1 if errors else 0)

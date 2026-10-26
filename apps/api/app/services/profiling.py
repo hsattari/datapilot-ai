@@ -18,6 +18,18 @@ CANONICAL_SYNONYMS = {
     "region": ["region", "area", "territory", "country"],
     "customer": ["customer", "customer_id", "customer_name", "client"],
 }
+# Looser matches on the words inside a column name (e.g. "purchase_cost", "total_turnover"). Used only when exactly one
+# unused column fits and its data type is right, so a wrong guess is unlikely; ambiguous names stay with the person.
+FUZZY_WORDS = {
+    "net_sales": ({"revenue", "sales", "turnover", "income"}, "number"),
+    "cost_of_goods_sold": ({"cost", "cogs", "purchase", "buying"}, "number"),
+    "order_date": ({"date", "ordered", "day"}, "date"),
+    "order_id": ({"order", "invoice", "receipt", "transaction"}, None),
+    "product": ({"product", "item", "sku", "article"}, "text"),
+    "region": ({"region", "area", "territory", "country", "city", "store", "branch"}, "text"),
+    "customer": ({"customer", "client", "buyer"}, "text"),
+}
+ID_WORDS = {"id", "no", "num", "number", "ref", "code"}
 # Names that could mean several things: never auto-accept without confirmation.
 AMBIGUOUS = {"amount", "value", "total", "price"}
 
@@ -139,6 +151,23 @@ def suggest_mapping(profile: dict) -> dict:
             if n in {slugify(x) for x in syns}:
                 out[canon] = {"column": n, "confidence": 0.9 if n == canon else 0.75}
                 break
+    types = {c["name"]: c["type"] for c in profile["columns"]}
+    for canon, (words, want) in FUZZY_WORDS.items():
+        if canon in out:
+            continue
+        used = {v["column"] for v in out.values()}
+        fits = []
+        for n in names:
+            toks = set(n.split("_"))
+            if n in used or n in AMBIGUOUS or not toks & words:
+                continue
+            if want and types.get(n) != want:
+                continue
+            if canon == "order_id" and not toks & ID_WORDS:
+                continue
+            fits.append(n)
+        if len(fits) == 1:
+            out[canon] = {"column": fits[0], "confidence": 0.65}
     for n in names:
         if n in AMBIGUOUS and "net_sales" not in out:
             out["net_sales"] = {"column": n, "confidence": 0.4, "needs_clarification":

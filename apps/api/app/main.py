@@ -20,8 +20,7 @@ from .schemas import ApproveIn, QuestionIn, RegisterIn, SourceIn
 from .security import create_token, hash_password
 from .services.backends import get_backend
 from .services.common import audit, owned, run_plan
-from .services.dimensions import DIMS, mapping_columns
-from .services import quality, semantic
+from .services import modelling, quality, semantic
 from .services.planner import make_plan
 from .services.query_engine import QueryRejected
 from .services.storage import get_storage, safe_filename
@@ -78,7 +77,7 @@ def healthz():
 def register(body: RegisterIn, db: Session = Depends(get_db)):
     if db.scalar(select(m.User).where(m.User.email == body.email.lower())):
         raise HTTPException(409, "Email already registered")
-    tenant = m.Tenant(name=body.organisation, currency=body.currency)
+    tenant = m.Tenant(name=body.organisation, currency=body.currency, auto_model=get_settings().auto_model_default)
     user = m.User(email=body.email.lower(), password_hash=hash_password(body.password))
     db.add_all([tenant, user])
     db.flush()
@@ -148,8 +147,12 @@ async def upload(source_id: str, file: UploadFile = File(...), p: Principal = De
 @app.get("/api/v1/jobs/{job_id}")
 def get_job(job_id: str, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     j = owned(db, m.IngestionJob, job_id, p.tenant_id)
+    ds = db.scalars(select(m.Dataset).where(m.Dataset.tenant_id == p.tenant_id,
+                                            m.Dataset.file_id == j.file_id)).all()
     return {"id": j.id, "status": j.status, "attempts": j.attempts, "error_category": j.error_category,
-            "error_message": j.error_message, "rows_loaded": j.rows_loaded}
+            "error_message": j.error_message, "rows_loaded": j.rows_loaded,
+            "datasets": [{"id": d.id, "name": d.name, "model_status": d.model_status,
+                          "auto": (d.profile.get("auto") or {}).get("status")} for d in ds]}
 
 
 @app.get("/api/v1/datasets")
@@ -196,55 +199,20 @@ def dataset_schema_versions(dataset_id: str, p: Principal = Depends(get_principa
 def approve_dataset(dataset_id: str, body: ApproveIn, p: Principal = Depends(require_writer),
                     db: Session = Depends(get_db)):
     d = owned(db, m.Dataset, dataset_id, p.tenant_id)
-    cols = {c["name"] for c in d.profile["columns"]}
-    allowed = set(semantic.FACT_COLUMNS) if body.role == "fact_sales" else set(mapping_columns(body.role))
-    for canon, src in body.mapping.items():
-        if canon not in allowed or src not in cols:
-            raise HTTPException(422, f"Invalid mapping {canon} -> {src}")
-    scalar = lambda sql: get_backend().scalar(p.tenant_id, sql)  # noqa: E731
     try:
-        if body.role == "fact_sales":
-            result = get_backend().build_fact_sales(p.tenant_id, d.table_name, body.mapping)
-            checks = quality.model_checks(result, body.mapping, scalar)
-        else:
-            result = get_backend().build_dimension(p.tenant_id, d.table_name, body.role, body.mapping)
-            checks = quality.dimension_checks(result)
+        result = modelling.build_model(db, p.tenant_id, d, body.role, body.mapping)
     except ValueError as e:
         raise HTTPException(422, str(e))
-    d.model_status, d.column_mapping = "approved", body.mapping
-    d.profile = {**d.profile, "model_result": result, "role": body.role}
-    quality.store_results(db, p.tenant_id, d.id, "model", checks)
-    db.flush()  # autoflush is off: make this approval visible to the relationship check
-    _refresh_relationships(db, p)
     audit(db, p, "dataset.approved", dataset_id=d.id, **{**result, "role": body.role})
     db.commit()
     return result
-
-
-def _approved_dimensions(db: Session, tenant_id: str) -> dict[str, m.Dataset]:
-    out = {}
-    for d in db.scalars(select(m.Dataset).where(m.Dataset.tenant_id == tenant_id,
-                                                 m.Dataset.model_status == "approved")
-                        .order_by(m.Dataset.created_at)):
-        role = d.profile.get("role")
-        if role in DIMS:
-            out[role] = d  # latest approved dataset per role wins
-    return out
-
-
-def _refresh_relationships(db: Session, p: Principal) -> None:
-    """Re-check how well sales join to each approved dimension (runs after any approval, either order)."""
-    for role, d in _approved_dimensions(db, p.tenant_id).items():
-        stats = quality.relationship_stats(lambda sql: get_backend().scalar(p.tenant_id, sql), role)
-        if stats:
-            quality.store_results(db, p.tenant_id, d.id, "relationship", [quality.relationship_result(stats)])
 
 
 @app.get("/api/v1/relationships")
 def relationships(p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     """Joins between sales and approved dimension tables, with live key coverage."""
     out = []
-    for role, d in _approved_dimensions(db, p.tenant_id).items():
+    for role, d in modelling.approved_dimensions(db, p.tenant_id).items():
         stats = quality.relationship_stats(lambda sql: get_backend().scalar(p.tenant_id, sql), role)
         out.append({"dataset_id": d.id, "dataset": d.name, "role": role, "sales_modelled": stats is not None,
                     **(stats or {})})

@@ -11,6 +11,7 @@ from ..config import get_settings
 from ..observability import tracer
 from ..models import AuditEvent, Dataset, IngestionJob, SourceFile
 from .backends import get_backend
+from .modelling import auto_model
 from .quality import profile_checks, record_schema_version, store_results
 from .profiling import parse_file, profile_frame, suggest_dimension, suggest_mapping
 from .storage import get_storage
@@ -57,6 +58,7 @@ def _process_job(db: Session, job_id: str) -> IngestionJob:
             db.flush()
             drift = record_schema_version(db, ds, f.source_id, prof)
             store_results(db, job.tenant_id, ds.id, "profile", profile_checks(prof, drift))
+            auto_model(db, job.tenant_id, ds)
             total += prof["row_count"]
         job.rows_loaded, job.status = total, "succeeded"
     except (ValueError, KeyError, AssertionError) as e:  # permanent

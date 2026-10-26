@@ -78,7 +78,12 @@ function Sources() {
       const up = await api(`/data-sources/${src.id}/uploads`, { method: "POST", body: fd });
       for (let i = 0; i < 60; i++) {
         const j = await api(`/jobs/${up.job_id}`);
-        if (j.status === "succeeded") return "ingested";
+        if (j.status === "succeeded") {
+          const d = (j.datasets || [])[0];
+          if (d?.auto === "built") return "ingested and set up automatically";
+          if (d?.auto === "needs_review") return "ingested - needs your check (open it below)";
+          return "ingested";
+        }
         if (j.status === "failed") return `failed: ${j.error_message}`;
         await new Promise(r => setTimeout(r, 1000));
       }
@@ -129,6 +134,12 @@ function Sources() {
       <h3>{profile.name}</h3>
       <table><thead><tr><th>Column</th><th>Type</th><th>Nulls</th><th>Distinct</th></tr></thead>
         <tbody>{profile.profile.columns.map((c: any) => <tr key={c.name}><td>{c.name}</td><td>{c.type}</td><td>{c.null_count}</td><td>{c.distinct}</td></tr>)}</tbody></table>
+      {profile.profile.auto?.status === "built" && <p data-testid="auto-note" style={{ background: "#eef7ee", padding: 8, borderRadius: 6 }}>
+        Detected and set up automatically ({profile.profile.auto.role === "fact_sales" ? "sales data" : profile.profile.auto.role === "dim_product" ? "products list" : "customers list"}).
+        {profile.profile.auto.metrics_approved?.length > 0 && <> Metrics approved: {profile.profile.auto.metrics_approved.join(", ")}.</>}
+        {" "}Check the columns below and change them if something is wrong.</p>}
+      {profile.profile.auto?.status === "needs_review" && <p data-testid="auto-review" style={{ background: "#fff6e5", padding: 8, borderRadius: 6 }}>
+        Needs your check: {profile.profile.auto.reason} Choose the right columns below, then approve.</p>}
       <h4>Proposed mapping</h4>
       {!profile.profile.suggested_dimension && <div data-testid="mapping">
         <p>Match each field to a column in this file. Gross profit needs a cost column; leave a field on "not in this file" if there is none.</p>
@@ -433,13 +444,13 @@ function YourData() {
 }
 
 function Settings() {
-  const [f, setF] = useState({ name: "", currency: "", timezone: "" });
+  const [f, setF] = useState({ name: "", currency: "", timezone: "", auto_model: true });
   const [role, setRole] = useState("");
   const [msg, setMsg] = useState("");
   const [loaded, setLoaded] = useState(false);
   useEffect(() => {
     let live = true;
-    api("/settings").then(r => { if (!live) return; setF({ name: r.name, currency: r.currency, timezone: r.timezone }); setRole(r.your_role); setLoaded(true); })
+    api("/settings").then(r => { if (!live) return; setF({ name: r.name, currency: r.currency, timezone: r.timezone, auto_model: r.auto_model }); setRole(r.your_role); setLoaded(true); })
       .catch(e => live && setMsg(e.message));
     return () => { live = false; };
   }, []);
@@ -449,6 +460,10 @@ function Settings() {
     <label>Organisation<input disabled={!loaded} value={f.name} onChange={e => setF(v => ({ ...v, name: e.target.value }))} /></label>
     <label>Currency (3 letters, e.g. GBP)<input disabled={!loaded} value={f.currency} onChange={e => setF(v => ({ ...v, currency: e.target.value.toUpperCase() }))} /></label>
     <label>Time zone (e.g. Europe/London)<input disabled={!loaded} value={f.timezone} onChange={e => setF(v => ({ ...v, timezone: e.target.value }))} /></label>
+    <label style={{ display: "block", margin: "8px 0" }}><input type="checkbox" disabled={!loaded} checked={f.auto_model}
+      onChange={e => setF(v => ({ ...v, auto_model: e.target.checked }))} style={{ display: "inline", width: "auto", marginRight: 6 }} />
+      Build models and approve standard metrics automatically when uploaded columns are recognised</label>
+    <p style={{ margin: "0 0 8px", fontSize: 13 }}>Anything unclear is still left for a person to confirm, and every automatic step is recorded in the Activity log. Turn this off if every model and metric must be approved by hand.</p>
     <button onClick={save} disabled={!loaded || role !== "admin"}>Save settings</button> {msg && <span role="status">{msg}</span>}
   </div>{role === "admin" && <YourData />}</>);
 }

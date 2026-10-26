@@ -49,7 +49,7 @@ def seed_metrics(db: Session, tenant_id: str) -> None:
                       dimensions=["month", "product", "region", "customer"], **m))
 
 
-def approve_metric(db: Session, tenant_id: str, name: str, has_cost: bool) -> Metric:
+def approve_metric(db: Session, tenant_id: str, name: str, has_cost: bool, commit: bool = True) -> Metric:
     m = db.scalar(select(Metric).where(Metric.tenant_id == tenant_id, Metric.name == name))
     if m is None:
         raise MetricInvalid("Metric not found")
@@ -57,5 +57,6 @@ def approve_metric(db: Session, tenant_id: str, name: str, has_cost: bool) -> Me
     if "cost_of_goods_sold" in cols and not has_cost:
         raise MetricInvalid("Cannot approve: required source data (cost of goods sold) is not mapped")
     m.status = "approved"
-    db.commit()
+    if commit:
+        db.commit()
     return m

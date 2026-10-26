@@ -2,6 +2,7 @@
 import uuid
 from datetime import datetime, timezone
 
+import sqlalchemy as sa
 from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -22,6 +23,8 @@ class Tenant(Base):
     name: Mapped[str] = mapped_column(String(200))
     currency: Mapped[str] = mapped_column(String(3), default="GBP")
     timezone: Mapped[str] = mapped_column(String(64), default="Europe/London")
+    # Build models and approve the built-in metrics automatically when the uploaded columns are recognised.
+    auto_model: Mapped[bool] = mapped_column(Boolean, default=True, server_default=sa.true())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 

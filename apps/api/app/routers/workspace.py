@@ -188,12 +188,14 @@ class SettingsIn(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     currency: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
     timezone: str | None = Field(default=None, max_length=64)
+    auto_model: bool | None = None
 
 
 @router.get("/settings")
 def get_settings_(p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     t = db.get(m.Tenant, p.tenant_id)
-    return {"name": t.name, "currency": t.currency, "timezone": t.timezone, "your_role": p.role}
+    return {"name": t.name, "currency": t.currency, "timezone": t.timezone, "auto_model": t.auto_model,
+            "your_role": p.role}
 
 
 @router.patch("/settings")
@@ -209,6 +211,8 @@ def update_settings(body: SettingsIn, p: Principal = Depends(require_admin), db:
         t.name = body.name
     if body.currency is not None:
         t.currency = body.currency
+    if body.auto_model is not None:
+        t.auto_model = body.auto_model
     audit(db, p, "settings.updated", **body.model_dump(exclude_none=True))
     db.commit()
-    return {"name": t.name, "currency": t.currency, "timezone": t.timezone}
+    return {"name": t.name, "currency": t.currency, "timezone": t.timezone, "auto_model": t.auto_model}
