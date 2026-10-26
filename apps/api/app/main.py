@@ -165,7 +165,8 @@ def list_datasets(p: Principal = Depends(get_principal), db: Session = Depends(g
 @app.get("/api/v1/datasets/{dataset_id}/profile")
 def dataset_profile(dataset_id: str, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     d = owned(db, m.Dataset, dataset_id, p.tenant_id)
-    return {"id": d.id, "name": d.name, "model_status": d.model_status, "profile": d.profile}
+    return {"id": d.id, "name": d.name, "model_status": d.model_status, "column_mapping": d.column_mapping,
+            "profile": d.profile}
 
 
 @app.get("/api/v1/datasets/{dataset_id}/quality")

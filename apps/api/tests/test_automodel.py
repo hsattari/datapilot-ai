@@ -99,3 +99,13 @@ def test_automatic_modelling_is_tenant_scoped(client):
     _auto(client, h1)
     _upload_and_run(client, h1, "orders_reference.csv", None)
     assert ask(client, h2, "total revenue")["outcome"] != "answered"
+
+
+def test_chosen_columns_are_saved_and_returned_when_the_dataset_is_reopened(client):
+    h, _ = register(client, "Keep", "k@keep.test")           # automatic modelling is off by default in tests
+    ds, mapping = ingest_and_model(client, h, "orders_reference.csv")
+    chosen = {k: v for k, v in mapping.items() if k != "region"}   # the person says: no region column
+    assert client.post(f"/api/v1/datasets/{ds}/approve", json={"mapping": chosen}, headers=h).status_code == 200
+    p = client.get(f"/api/v1/datasets/{ds}/profile", headers=h).json()
+    assert p["model_status"] == "approved"
+    assert p["column_mapping"] == chosen and "region" not in p["column_mapping"]

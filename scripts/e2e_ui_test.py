@@ -56,9 +56,15 @@ with sync_playwright() as p:
     expect(page.get_by_text("Proposed mapping")).to_be_visible()
     expect(page.get_by_label("Cost of goods sold")).to_have_value("cost")   # suggested, and changeable by the person
     expect(page.get_by_label("Net sales (revenue)")).to_have_value("net_sales")
+    page.get_by_label("Customer").select_option("")   # the person drops a field; it must stay dropped after saving
     page.screenshot(path=f"{S}/profile.png")
     page.get_by_role("button", name="Approve and build model").click()
-    expect(page.get_by_text("Model built: 3 rows loaded, 0 quarantined.")).to_be_visible(timeout=15000)
+    expect(page.get_by_test_id("approve-note")).to_contain_text("Saved. Model built: 3 rows loaded, 0 quarantined.", timeout=15000)
+    expect(page.get_by_test_id("model-state")).to_have_text("Approved")
+    expect(page.get_by_label("Customer")).to_have_value("")                    # the saved choice, not the old suggestion
+    expect(page.get_by_label("Cost of goods sold")).to_have_value("cost")
+    page.get_by_role("link", name="orders_reference").first.click()             # reopen: the saved columns are shown
+    expect(page.get_by_label("Customer")).to_have_value("")
     print("OK profile shown, mapping approved, model built")
 
     expect(page.get_by_test_id("quality")).to_contain_text("Data quality: warn", timeout=10000)  # reference data is old: freshness warns
@@ -104,7 +110,7 @@ with sync_playwright() as p:
     page.get_by_role("link", name="products", exact=True).click()
     expect(page.get_by_text("This looks like a products list")).to_be_visible()
     page.get_by_role("button", name="Approve as products list").click()
-    expect(page.get_by_text("Products list built: 2 loaded, 0 quarantined.")).to_be_visible(timeout=15000)
+    expect(page.get_by_test_id("approve-note")).to_contain_text("Products list built: 2 loaded, 0 quarantined.", timeout=15000)
     expect(page.get_by_test_id("joins")).to_contain_text("2 of 2 (100%)", timeout=10000)
     page.screenshot(path=f"{S}/joins.png")
     print("OK products file recognised, approved as a dimension, joins to sales at 100%")

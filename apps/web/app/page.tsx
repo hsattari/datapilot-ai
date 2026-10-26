@@ -60,6 +60,7 @@ const FACT_FIELDS: [string, string][] = [
 
 function Sources() {
   const [msg, setMsg] = useState("");
+  const [note, setNote] = useState("");   // result of the last approve, shown next to the button
   const [mapping, setMapping] = useState<Record<string, string>>({});
   const [results, setResults] = useState<{ name: string; status: string }[]>([]);
   const [datasets, setDatasets] = useState<any[]>([]);
@@ -103,8 +104,12 @@ function Sources() {
   };
   const open = async (id: string) => {
     const pr = await api(`/datasets/${id}/profile`);
-    setMapping(Object.fromEntries(Object.entries<any>(pr.profile.suggested_mapping || {})
-      .filter(([, v]) => !v.needs_clarification).map(([k, v]) => [k, v.column])));
+    // An approved dataset shows the columns that were actually saved; otherwise the automatic suggestions.
+    setMapping(pr.model_status === "approved" && pr.column_mapping && Object.keys(pr.column_mapping).length
+      ? pr.column_mapping
+      : Object.fromEntries(Object.entries<any>(pr.profile.suggested_mapping || {})
+        .filter(([, v]) => !v.needs_clarification).map(([k, v]) => [k, v.column])));
+    setNote("");
     setProfile(pr);
     setQuality(await api(`/datasets/${id}/quality`).catch(() => null));
     setVersions((await api(`/datasets/${id}/schema-versions`).catch(() => ({ versions: [] }))).versions);
@@ -113,14 +118,16 @@ function Sources() {
   const approve = async () => {
     const chosen = Object.fromEntries(Object.entries(mapping).filter(([, v]) => v));
     try { const r = await api(`/datasets/${profile.id}/approve`, { method: "POST", body: JSON.stringify({ mapping: chosen }) });
-      setMsg(`Model built: ${r.rows_loaded} rows loaded, ${r.rows_rejected} quarantined.`); refresh(); open(profile.id); }
-    catch (e: any) { setMsg(e.message); }
+      const text = `Saved. Model built: ${r.rows_loaded} rows loaded, ${r.rows_rejected} quarantined.`;
+      setMsg(text); refresh(); await open(profile.id); setNote(text); }
+    catch (e: any) { setMsg(e.message); setNote(`Not saved: ${e.message}`); }
   };
   const approveDim = async () => {
     const sd = profile.profile.suggested_dimension;
     try { const r = await api(`/datasets/${profile.id}/approve`, { method: "POST", body: JSON.stringify({ mapping: sd.mapping, role: sd.role }) });
-      setMsg(`${sd.label} list built: ${r.rows_loaded} loaded, ${r.rows_rejected} quarantined.`); refresh(); open(profile.id); }
-    catch (e: any) { setMsg(e.message); }
+      const text = `Saved. ${sd.label} list built: ${r.rows_loaded} loaded, ${r.rows_rejected} quarantined.`;
+      setMsg(text); refresh(); await open(profile.id); setNote(text); }
+    catch (e: any) { setMsg(e.message); setNote(`Not saved: ${e.message}`); }
   };
   return (<>
     <div style={card}>
@@ -158,7 +165,9 @@ function Sources() {
         <h4>This looks like a {profile.profile.suggested_dimension.label.toLowerCase()} list</h4>
         <div>{Object.entries<string>(profile.profile.suggested_dimension.mapping).map(([k, v]) => <div key={k}>{k} ← {v}</div>)}</div>
         <p><button onClick={approveDim}>Approve as {profile.profile.suggested_dimension.label.toLowerCase()} list</button></p></>}
-      {!profile.profile.suggested_dimension && <p><button onClick={approve}>Approve and build model</button></p>}
+      {!profile.profile.suggested_dimension && <p><button onClick={approve}>{profile.model_status === "approved" ? "Rebuild model with these columns" : "Approve and build model"}</button>
+        {profile.model_status === "approved" && <b data-testid="model-state" style={{ color: "#1a7f37", marginLeft: 8 }}>Approved</b>}</p>}
+      {note && <p role="status" data-testid="approve-note" style={{ fontWeight: 600, color: note.startsWith("Not saved") ? "#b00020" : "#1a7f37" }}>{note}</p>}
     </div>}
     {profile && quality && <div style={card} data-testid="quality">
       <h3>Data quality: {quality.overall}</h3>
