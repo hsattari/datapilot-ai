@@ -152,6 +152,11 @@ with sync_playwright() as p:
     expect(page.locator("tr[data-alert='Profit above 100']")).to_contain_text("140")
     page.screenshot(path=f"{S}/alerts.png")
     print("OK alert created and triggered (gross profit 140 > 100)")
+    page.get_by_role("button", name="Home").click()
+    expect(page.get_by_test_id("alert-banner")).to_contain_text("1 alert is triggered", timeout=10000)
+    expect(page.get_by_test_id("alert-banner")).to_contain_text("Profit above 100")
+    print("OK Home shows a banner for the triggered alert")
+    page.get_by_role("button", name="Alerts").click()
 
     page.get_by_role("button", name="Settings").click()
     expect(page.get_by_text("Your role:")).to_contain_text("admin", timeout=10000)

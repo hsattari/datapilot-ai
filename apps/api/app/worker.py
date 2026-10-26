@@ -3,6 +3,8 @@ import logging
 import time
 
 from .db import SessionLocal
+from .config import get_settings
+from .services.alerts import run_due_alerts
 from .services.ingestion import run_pending
 from .services.lifecycle import purge_expired
 
@@ -13,6 +15,7 @@ log = logging.getLogger("worker")
 def main(poll_seconds: float = 2.0) -> None:
     delay = poll_seconds
     last_purge = 0.0
+    last_alerts = 0.0
     while True:
         try:
             with SessionLocal() as db:
@@ -20,6 +23,13 @@ def main(poll_seconds: float = 2.0) -> None:
             delay = poll_seconds
             if n:
                 log.info("processed %d job(s)", n)
+            every = get_settings().alert_check_minutes
+            if every > 0 and time.monotonic() - last_alerts > 60:  # look for due alerts once a minute
+                with SessionLocal() as db:
+                    checked = run_due_alerts(db, every)
+                last_alerts = time.monotonic()
+                if checked:
+                    log.info("checked %d alert(s)", checked)
             if time.monotonic() - last_purge > 3600:  # retention: at most hourly
                 with SessionLocal() as db:
                     purged = purge_expired(db)

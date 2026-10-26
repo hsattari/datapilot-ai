@@ -69,6 +69,9 @@ class Settings(BaseSettings):
     # New organisations build models and approve the built-in metrics automatically when columns are recognised.
     auto_model_default: bool = True
 
+    # Scheduled alert checks (minutes between checks of each alert; the worker runs them). 0 = off.
+    alert_check_minutes: int = 60
+
     # Upload limits
     max_upload_mb: int = 25
     max_sheet_rows: int = 1_000_000

@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from .. import models as m
 from ..db import get_db
 from ..deps import Principal, get_principal, require_admin, require_writer
+from ..services.alerts import evaluate_alert
 from ..services.common import audit, owned, run_plan
 from ..services.planner import make_plan
 from ..services.query_engine import Plan, QueryRejected
@@ -115,21 +116,10 @@ def list_alerts(p: Principal = Depends(get_principal), db: Session = Depends(get
 
 @router.post("/alerts/evaluate")
 def evaluate_alerts(p: Principal = Depends(require_writer), db: Session = Depends(get_db)):
-    """Check every alert against current data (a scheduled run will call the same logic)."""
+    """Check every alert against current data now (the worker also does this on a schedule)."""
     out = []
     for a in db.scalars(select(m.Alert).where(m.Alert.tenant_id == p.tenant_id).order_by(m.Alert.created_at)):
-        try:
-            res = run_plan(db, p, Plan(intent="metric_total", metric=a.metric, visualization="number"))
-            val = res["rows"][0][0] if res["rows"] else None
-            if val is None:
-                a.last_state, a.last_value = "error", None
-            else:
-                a.last_value = float(val)
-                hit = a.last_value > a.threshold if a.comparison == "above" else a.last_value < a.threshold
-                a.last_state = "triggered" if hit else "ok"
-        except Exception:
-            a.last_state, a.last_value = "error", None
-        a.last_checked_at = datetime.now(timezone.utc)
+        evaluate_alert(db, p, a)
         if a.last_state == "triggered":
             audit(db, p, "alert.triggered", alert_id=a.id, value=a.last_value)
         out.append(_alert_json(a))

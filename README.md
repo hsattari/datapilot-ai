@@ -9,6 +9,7 @@ proposal (v1.0, 10 Oct 2026).
 | Area | Status |
 |---|---|
 | Auth (JWT), tenant isolation (server-side tenant resolution), roles | **Complete**, tested |
+| Alerts: threshold rules on approved metrics, checked on demand and automatically by the worker (hourly by default); one activity-log entry per state change (triggered / recovered); banner on Home | **Tested locally** (5 API tests + browser). **Not built:** e-mail / Teams notifications (needs a sender account), per-user alert recipients |
 | Automatic modelling after upload: clear files are modelled and the built-in metrics (e.g. Gross Profit) approved with no clicks; ambiguous columns, text cost columns and anything failing wait for a person; every automatic step is in the Activity log; admins can switch it off (Settings) | **Tested locally** (9 API tests, 2 browser flows). Not yet tried on real customer files; the detection of unusual column names is rule-based |
 | Upload API (CSV/XLSX/TXT/JSON/JSONL), validation, immutable raw storage (local; ADLS Gen2 backend coded) | **Complete** locally; **ADLS Gen2 backend verified on real Azure** by the project owner (write, read back, overwrite refused, delete; a real bug in the first version was found and fixed) |
 | Async ingestion worker, retries/backoff, profiling, mapping suggestions, quarantine + count reconciliation | **Complete**, tested |

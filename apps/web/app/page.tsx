@@ -36,9 +36,17 @@ function Auth({ onAuthed }: { onAuthed: () => void }) {
 
 function Home() {
   const [tiles, setTiles] = useState<any[]>([]);
-  useEffect(() => { api("/dashboard").then(r => setTiles(r.tiles)).catch(() => {}); }, []);
-  if (!tiles.length) return <div style={card}>No approved metrics with data yet. Upload a file under Data Sources and approve the model.</div>;
-  return <>{tiles.map(t => (
+  const [hot, setHot] = useState<any[]>([]);
+  useEffect(() => {
+    api("/dashboard").then(r => setTiles(r.tiles)).catch(() => {});
+    api("/alerts").then(r => setHot(r.filter((a: any) => a.last_state === "triggered"))).catch(() => {});
+  }, []);
+  const banner = hot.length > 0 && <div data-testid="alert-banner" role="alert" style={{ ...card, borderColor: "#b00020", background: "#fdecee" }}>
+    <b style={{ color: "#b00020" }}>{hot.length === 1 ? "1 alert is triggered" : `${hot.length} alerts are triggered`}</b>
+    {hot.map(a => <div key={a.id}>{a.name}: {a.metric} is {a.last_value} ({a.comparison} {a.threshold})</div>)}
+    <small>Details and checks are under Alerts.</small></div>;
+  if (!tiles.length) return <>{banner}<div style={card}>No approved metrics with data yet. Upload a file under Data Sources and the model is set up for you when the columns are clear.</div></>;
+  return <>{banner}{tiles.map(t => (
     <div key={t.metric} style={card}>
       <h3 style={{ margin: 0 }}>{t.label}: {Number(t.total).toLocaleString()}</h3>
       {t.caveats.map((c: string) => <small key={c} style={{ color: "#8a5a00" }}>{c}</small>)}
@@ -304,11 +312,12 @@ function Alerts() {
       {msg && <p role="status">{msg}</p>}
     </div>
     <div style={card}>
-      <p style={{ marginTop: 0 }}><button onClick={check}>Check now</button> <small>Alerts are checked when you press this button; scheduled checks need the background worker.</small></p>
-      <table><thead><tr><th>Alert</th><th>Rule</th><th>Last value</th><th>State</th><th></th></tr></thead>
+      <p style={{ marginTop: 0 }}><button onClick={check}>Check now</button> <small>Alerts are also checked automatically about once an hour by the background worker, and you see a banner on Home when one is triggered.</small></p>
+      <table><thead><tr><th>Alert</th><th>Rule</th><th>Last value</th><th>State</th><th>Last checked</th><th></th></tr></thead>
         <tbody>{rows.map(a => <tr key={a.id} data-alert={a.name}><td>{a.name}</td><td>{a.metric} {a.comparison} {a.threshold}</td>
           <td>{a.last_value ?? "–"}</td>
           <td style={{ color: a.last_state === "triggered" ? "#b00020" : a.last_state === "error" ? "#8a5a00" : "#1a7f37" }}>{a.last_state ?? "not checked"}</td>
+          <td>{a.last_checked_at ? new Date(a.last_checked_at).toLocaleString() : "–"}</td>
           <td><button onClick={() => del(a.id)}>Delete</button></td></tr>)}</tbody></table>
     </div></>);
 }
