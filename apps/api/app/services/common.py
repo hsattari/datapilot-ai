@@ -40,7 +40,9 @@ def run_plan(db: Session, p: Principal, plan, today: date | None = None) -> dict
         return out
 
 
-def _run_plan(db: Session, p: Principal, plan, today: date | None = None) -> dict:
+def _compile(db: Session, p: Principal, plan, today: date | None = None):
+    """Approval, dimension and policy checks, then compile to parameterised SQL. Shared by run and preview so a
+    preview can never show something the real run would refuse (or the other way round)."""
     metric = db.scalar(select(m.Metric).where(m.Metric.tenant_id == p.tenant_id,
                                               m.Metric.name == plan.metric,
                                               m.Metric.status == "approved"))
@@ -53,6 +55,19 @@ def _run_plan(db: Session, p: Principal, plan, today: date | None = None) -> dic
     needs_dims = any(a in plan.dimensions or any(f.field == a for f in plan.filters) for a in ATTR_TO_ROLE)
     sql, params = compile_plan(plan, metric.expression, metric.aggregation, today, backend.month_expr("order_date"),
                                backend.tables(p.tenant_id) if needs_dims else None)
+    return metric, backend, sql, params
+
+
+def preview_plan(db: Session, p: Principal, plan, today: date | None = None) -> dict:
+    """The SQL a plan would run and the metric it uses, WITHOUT executing it."""
+    metric, _, sql, params = _compile(db, p, plan, today)
+    return {"sql": sql, "params": [str(x) for x in params],
+            "metric": {"name": metric.name, "label": metric.label, "definition": metric.description,
+                       "expression": metric.expression, "version": metric.version}}
+
+
+def _run_plan(db: Session, p: Principal, plan, today: date | None = None) -> dict:
+    metric, backend, sql, params = _compile(db, p, plan, today)
     cols, rows = execute_readonly(p.tenant_id, sql, params)
     caveats = ["Associations shown here do not establish causation."]
     fresh = backend.scalar(p.tenant_id, "SELECT max(order_date) FROM fact_sales")

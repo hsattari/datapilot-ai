@@ -54,7 +54,7 @@ Status words, used strictly:
 |---|---|---|
 | Ten-step request lifecycle | Tested | Server-side tenant, hard refusals before the model, plan validated, SQL validated (single SELECT, allowlist, LIMIT), read-only execution, provenance, audit |
 | Gold-question set and gates | Partial | 29 planner cases (**Verified** live) plus a security regression suite. Not built: stored evaluation results per release (`ai_evaluations`), latency and cost per question, repeated runs |
-| MCP tools | Partial | 6 read-only tools exist. The proposal names 8; missing: `list_data_sources`, `get_dataset_profile`, `get_metric_definition`, `preview_analytical_query`, `get_pipeline_status`, `get_data_quality_summary` |
+| MCP tools | Tested | 12 read-only tools cover all 8 the proposal names (`ask_data` is its `run_approved_query`). Not tested with a specific MCP client app |
 | Copilot readiness | Not built | Needs Fabric/Power BI licensing |
 
 ## 14. Metadata database and API
@@ -63,7 +63,7 @@ Present: tenants, users, memberships, identities, data_sources, source_files, in
 
 Not built: `workspaces`, `data_models`, `model_dependencies`, `data_quality_rules` (rules are fixed in code), `metric_dimensions`, `dashboards`, `conversations`, `conversation_messages`, `ai_evaluations`.
 
-API gaps against the illustrative list: `POST /data-sources/{id}/sync`, `GET /data-sources`, `/conversations/{id}/messages`.
+API gaps against the illustrative list: `POST /data-sources/{id}/sync`, `/conversations/{id}/messages`. `GET /data-sources` and `POST /analytics/preview` now exist.
 
 ## 15. Frontend
 
@@ -117,9 +117,9 @@ Not built: product analytics for activation, time to first dashboard, retention 
 ## Priorities for what is left
 
 1. ~~Cost controls: quotas~~ (done, see section 17-18; token budgets and billing still open).
-2. Complete the MCP tool set (read-only wrappers over existing endpoints).
+2. ~~Complete the MCP tool set~~ (done).
 3. XML upload.
-4. Lineage view and a Data Sources list endpoint.
+4. Lineage view.
 5. Weekly management summary and a Dashboards page.
 6. Conversations (follow-up context), answer feedback and answer export.
 7. Things that need the owner: Fabric capacity, a real identity provider, a mail sender, legal review (DPIA), private networking.

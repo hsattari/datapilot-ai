@@ -19,7 +19,7 @@ from .services import ratelimit
 from .schemas import ApproveIn, QuestionIn, RegisterIn, SourceIn
 from .security import create_token, hash_password
 from .services.backends import get_backend
-from .services.common import audit, owned, run_plan
+from .services.common import audit, owned, preview_plan, run_plan
 from .services import insights, modelling, quality, quotas, semantic
 from .services.planner import make_plan
 from .services.query_engine import QueryRejected
@@ -147,6 +147,25 @@ async def upload(source_id: str, file: UploadFile = File(...), p: Principal = De
     return {"file_id": sf.id, "job_id": job.id, "sha256": sha, "version": version}
 
 
+@app.get("/api/v1/data-sources")
+def list_data_sources(p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+    rows = db.scalars(select(m.DataSource).where(m.DataSource.tenant_id == p.tenant_id)
+                      .order_by(m.DataSource.created_at.desc())).all()
+    out = []
+    for s_ in rows:
+        files = db.scalars(select(m.SourceFile).where(m.SourceFile.tenant_id == p.tenant_id,
+                                                      m.SourceFile.source_id == s_.id)
+                           .order_by(m.SourceFile.created_at.desc())).all()
+        last = None
+        if files:
+            j = db.scalar(select(m.IngestionJob).where(m.IngestionJob.tenant_id == p.tenant_id,
+                                                       m.IngestionJob.file_id == files[0].id))
+            last = {"filename": files[0].filename, "uploaded_at": files[0].created_at.isoformat(),
+                    "status": j.status if j else None}
+        out.append({"id": s_.id, "name": s_.name, "kind": s_.kind, "files": len(files), "last_file": last})
+    return out
+
+
 @app.get("/api/v1/jobs/{job_id}")
 def get_job(job_id: str, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     j = owned(db, m.IngestionJob, job_id, p.tenant_id)
@@ -241,6 +260,31 @@ def approve_metric(name: str, p: Principal = Depends(require_admin), db: Session
     audit(db, p, "metric.approved", name=name)
     db.commit()
     return {"name": metric.name, "status": metric.status}
+
+
+@app.post("/api/v1/analytics/preview", dependencies=[ratelimit.by_user("query", "rate_query_per_minute")])
+def analytics_preview(body: QuestionIn, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+    """What a question WOULD run: the structured plan, the governed metric and the SQL, without executing it.
+    Same planner, same hard refusals, same approval and dimension checks as /analytics/query; counts as a question."""
+    quotas.enforce(db, p.tenant_id, "questions")
+    approved = {x.name: x.description for x in db.scalars(select(m.Metric).where(
+        m.Metric.tenant_id == p.tenant_id, m.Metric.status == "approved"))}
+    unapproved = {x.name: x.description for x in db.scalars(select(m.Metric).where(
+        m.Metric.tenant_id == p.tenant_id, m.Metric.status != "approved"))}
+    res = make_plan(body.question, approved, unapproved)
+    db.add(m.AnalyticalQuery(tenant_id=p.tenant_id, user_id=p.user_id, question=body.question[:1000],
+                             outcome="preview" if res.outcome == "plan" else res.outcome))
+    audit(db, p, f"query.preview.{res.outcome}")
+    if res.outcome != "plan":
+        db.commit()
+        return {"outcome": res.outcome, "message": res.message, "planner": res.source}
+    try:
+        out = preview_plan(db, p, res.plan)
+    except QueryRejected as e:
+        db.commit()
+        return {"outcome": "refusal", "message": str(e), "planner": res.source}
+    db.commit()
+    return {"outcome": "preview", "plan": res.plan.model_dump(mode="json"), "planner": res.source, **out}
 
 
 @app.post("/api/v1/analytics/query", dependencies=[ratelimit.by_user("query", "rate_query_per_minute")])
