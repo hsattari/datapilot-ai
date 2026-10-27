@@ -201,7 +201,7 @@ def approve_dataset(dataset_id: str, body: ApproveIn, p: Principal = Depends(req
                     db: Session = Depends(get_db)):
     d = owned(db, m.Dataset, dataset_id, p.tenant_id)
     try:
-        result = modelling.build_model(db, p.tenant_id, d, body.role, body.mapping)
+        result = modelling.build_model(db, p.tenant_id, d, body.role, body.mapping, body.replace_existing)
     except ValueError as e:
         raise HTTPException(422, str(e))
     audit(db, p, "dataset.approved", dataset_id=d.id, **{**result, "role": body.role})

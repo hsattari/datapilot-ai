@@ -35,7 +35,8 @@ def refresh_relationships(db: Session, tenant_id: str) -> None:
             quality.store_results(db, tenant_id, d.id, "relationship", [quality.relationship_result(stats)])
 
 
-def build_model(db: Session, tenant_id: str, d: m.Dataset, role: str, mapping: dict[str, str]) -> dict:
+def build_model(db: Session, tenant_id: str, d: m.Dataset, role: str, mapping: dict[str, str],
+                replace_existing: bool = False) -> dict:
     """Validate the mapping, build the modelled table, store quality results. Raises ValueError if it cannot.
     Does not commit: the caller commits (and audits)."""
     cols = {c["name"] for c in d.profile["columns"]}
@@ -45,7 +46,7 @@ def build_model(db: Session, tenant_id: str, d: m.Dataset, role: str, mapping: d
             raise ValueError(f"Invalid mapping {canon} -> {src}")
     scalar = lambda sql: get_backend().scalar(tenant_id, sql)  # noqa: E731
     if role == "fact_sales":
-        result = get_backend().build_fact_sales(tenant_id, d.table_name, mapping)
+        result = get_backend().build_fact_sales(tenant_id, d.table_name, mapping, d.id, replace_existing)
         checks = quality.model_checks(result, mapping, scalar)
     else:
         result = get_backend().build_dimension(tenant_id, d.table_name, role, mapping)

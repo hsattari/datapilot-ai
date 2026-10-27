@@ -25,7 +25,8 @@ class Backend(Protocol):
 
     def month_expr(self, col: str) -> str: ...
     def load_bronze(self, tenant_id: str, table: str, df: pd.DataFrame) -> None: ...
-    def build_fact_sales(self, tenant_id: str, bronze_table: str, mapping: dict[str, str]) -> dict: ...
+    def build_fact_sales(self, tenant_id: str, bronze_table: str, mapping: dict[str, str],
+                         dataset_id: str = "adhoc", replace_all: bool = False) -> dict: ...
     def build_dimension(self, tenant_id: str, bronze_table: str, role: str, mapping: dict[str, str]) -> dict: ...
     def tables(self, tenant_id: str) -> set[str]: ...
     def export_table(self, tenant_id: str, table: str) -> tuple[list[str], list[tuple]]: ...
@@ -49,8 +50,8 @@ class DuckDBBackend:
     def load_bronze(self, tenant_id, table, df):
         duck.load_bronze(tenant_id, table, df)
 
-    def build_fact_sales(self, tenant_id, bronze_table, mapping):
-        return duck.build_fact_sales(tenant_id, bronze_table, mapping)
+    def build_fact_sales(self, tenant_id, bronze_table, mapping, dataset_id="adhoc", replace_all=False):
+        return duck.build_fact_sales(tenant_id, bronze_table, mapping, dataset_id, replace_all)
 
     def build_dimension(self, tenant_id, bronze_table, role, mapping):
         return duck.build_dimension(tenant_id, bronze_table, role, mapping)
@@ -157,10 +158,14 @@ class DatabricksBackend:
                 params = {f"p{r}_{c}": v for r, row in enumerate(chunk) for c, v in enumerate(row)}
                 self._exec(cur, f"INSERT INTO {table} VALUES {ph}", params)
 
-    def build_fact_sales(self, tenant_id, bronze_table, mapping):
+    def build_fact_sales(self, tenant_id, bronze_table, mapping, dataset_id="adhoc", replace_all=False):
+        """Accumulating sales model (same semantics as the DuckDB engine): silver_sales keeps every file's rows,
+        later files replace earlier rows for the same order ID, fact_sales is rebuilt from silver_sales."""
         bronze_table = _ident(bronze_table)
         for col in mapping.values():
             _ident(col)
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", dataset_id):
+            raise ValueError("Unsafe dataset id")
         missing = [r for r in ("order_id", "order_date", "net_sales") if r not in mapping]
         if missing:
             raise ValueError(f"Missing required mappings: {missing}")
@@ -173,27 +178,47 @@ class DatabricksBackend:
             return (f"NULLIF(TRIM(`{mapping[canon]}`), '') AS {canon}" if canon in mapping
                     else f"CAST(NULL AS STRING) AS {canon}")
 
+        cols = "order_id, order_date, net_sales, cost_of_goods_sold, product, region, customer"
+        ddl = ("order_id STRING, order_date DATE, net_sales DECIMAL(18,2), cost_of_goods_sold DECIMAL(18,2), "
+               "product STRING, region STRING, customer STRING, dataset_id STRING")
+        valid = "order_id IS NOT NULL AND order_date IS NOT NULL AND net_sales IS NOT NULL"
         select = ", ".join([txt("order_id"), cast("order_date", "DATE"), cast("net_sales", "DECIMAL(18,2)"),
                             cast("cost_of_goods_sold", "DECIMAL(18,2)"), txt("product"), txt("region"),
                             txt("customer")])
+        ds = f"'{dataset_id}'"
         with self._connect(tenant_id, True) as conn, conn.cursor() as cur:
             self._exec(cur, f"USE SCHEMA {self.schema(tenant_id)}")
-            self._exec(cur, f"CREATE OR REPLACE TEMPORARY VIEW stg AS SELECT {select} FROM {bronze_table}")
-            self._exec(cur, "CREATE OR REPLACE TABLE quarantine_sales AS SELECT * FROM stg "
-                            "WHERE order_id IS NULL OR order_date IS NULL OR net_sales IS NULL")
-            self._exec(cur, "CREATE OR REPLACE TABLE fact_sales AS SELECT * FROM stg "
-                            "WHERE order_id IS NOT NULL AND order_date IS NOT NULL AND net_sales IS NOT NULL")
 
             def one(q):
                 self._exec(cur, q)
-                return cur.fetchone()[0]
+                return cur.fetchone()
 
-            loaded, rejected = one("SELECT count(*) FROM fact_sales"), one("SELECT count(*) FROM quarantine_sales")
-            total = one("SELECT count(*) FROM stg")
-            cost_missing = one("SELECT count(*) FROM fact_sales WHERE cost_of_goods_sold IS NULL")
+            self._exec(cur, f"CREATE TABLE IF NOT EXISTS silver_sales ({ddl})")
+            self._exec(cur, f"CREATE TABLE IF NOT EXISTS quarantine_sales ({ddl})")
+            self._exec(cur, f"CREATE OR REPLACE TEMPORARY VIEW stg AS SELECT {select} FROM {bronze_table}")
+            total = one("SELECT count(*) FROM stg")[0]
+            self._exec(cur, f"DELETE FROM silver_sales WHERE dataset_id = {ds}")
+            self._exec(cur, f"DELETE FROM quarantine_sales WHERE dataset_id = {ds}")
+            if replace_all:
+                self._exec(cur, f"DELETE FROM silver_sales WHERE dataset_id <> {ds}")
+                self._exec(cur, f"DELETE FROM quarantine_sales WHERE dataset_id <> {ds}")
+            replaced_rows, replaced_orders = one(
+                f"SELECT count(*), count(DISTINCT order_id) FROM silver_sales WHERE order_id IN "
+                f"(SELECT order_id FROM stg WHERE {valid})")
+            self._exec(cur, f"DELETE FROM silver_sales WHERE order_id IN (SELECT order_id FROM stg WHERE {valid})")
+            self._exec(cur, f"INSERT INTO silver_sales SELECT {cols}, {ds} FROM stg WHERE {valid}")
+            self._exec(cur, f"INSERT INTO quarantine_sales SELECT {cols}, {ds} FROM stg WHERE NOT ({valid})")
+            self._exec(cur, f"CREATE OR REPLACE TABLE fact_sales AS SELECT {cols} FROM silver_sales")
+            loaded = one(f"SELECT count(*) FROM silver_sales WHERE dataset_id = {ds}")[0]
+            rejected = one(f"SELECT count(*) FROM quarantine_sales WHERE dataset_id = {ds}")[0]
+            fact_total = one("SELECT count(*) FROM fact_sales")[0]
+            files = one("SELECT count(DISTINCT dataset_id) FROM silver_sales")[0]
+            cost_missing = one("SELECT count(*) FROM fact_sales WHERE cost_of_goods_sold IS NULL")[0]
             assert loaded + rejected == total  # reconcile: no silent record loss
         return {"rows_loaded": loaded, "rows_rejected": rejected, "cost_missing_rows": cost_missing,
-                "has_cost": "cost_of_goods_sold" in mapping}
+                "has_cost": "cost_of_goods_sold" in mapping, "rows_replaced": replaced_rows,
+                "orders_replaced": replaced_orders, "fact_rows_total": fact_total, "files_in_model": files,
+                "replace_all": replace_all}
 
     def build_dimension(self, tenant_id, bronze_table, role, mapping):
         bronze_table = _ident(bronze_table)

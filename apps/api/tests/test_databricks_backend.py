@@ -22,7 +22,10 @@ class FakeCursor:
         self.log.append((sql, params))
 
     def fetchone(self):
-        return (self.results.pop(0),) if self.results else (0,)
+        if not self.results:
+            return (0,)
+        r = self.results.pop(0)
+        return tuple(r) if isinstance(r, (tuple, list)) else (r,)
 
     def fetchmany(self, n):
         return [(1.0,)]
@@ -106,16 +109,33 @@ def test_load_bronze_and_build_fact_sales_sql(dbx):
         b.load_bronze(TENANT, "bad;name", df)
 
     log.clear()
-    results += [2, 0, 2, 0]  # loaded, rejected, total, cost_missing
+    # reads in order: total staged, (replaced rows, replaced orders), loaded, rejected, fact total, files, cost missing
+    results += [2, (1, 1), 2, 0, 5, 2, 0]
     out = b.build_fact_sales(TENANT, "bronze_x", {"order_id": "order_id", "order_date": "order_date",
-                                                  "net_sales": "net_sales", "cost_of_goods_sold": "cost"})
-    assert out == {"rows_loaded": 2, "rows_rejected": 0, "cost_missing_rows": 0, "has_cost": True}
+                                                  "net_sales": "net_sales", "cost_of_goods_sold": "cost"},
+                             "11111111-2222-3333-4444-555555555555")
+    assert out == {"rows_loaded": 2, "rows_rejected": 0, "cost_missing_rows": 0, "has_cost": True,
+                   "rows_replaced": 1, "orders_replaced": 1, "fact_rows_total": 5, "files_in_model": 2,
+                   "replace_all": False}
     for s, _ in log:  # every generated statement must parse as Databricks SQL
         sqlglot.parse_one(s, dialect="databricks")
-    results[:] = [2, 1, 2, 0]  # reconciliation failure must raise, not pass silently
+    stmts = [s for s, _ in log]
+    assert any(s.startswith("CREATE TABLE IF NOT EXISTS silver_sales") for s in stmts)   # files accumulate
+    assert not any("CREATE OR REPLACE TABLE silver_sales" in s for s in stmts)
+    assert any(s.startswith("DELETE FROM silver_sales WHERE order_id IN") for s in stmts)  # upsert by order id
+    assert any(s.startswith("CREATE OR REPLACE TABLE fact_sales AS SELECT") and "FROM silver_sales" in s for s in stmts)
+    assert not any("dataset_id <>" in s for s in stmts)                                      # no replace_all by default
+    log.clear(); results[:] = [2, (0, 0), 2, 0, 2, 1, 0]
+    b.build_fact_sales(TENANT, "bronze_x", {"order_id": "order_id", "order_date": "order_date", "net_sales": "net_sales"},
+                       "11111111-2222-3333-4444-555555555555", replace_all=True)
+    assert any("DELETE FROM silver_sales WHERE dataset_id <>" in s for s, _ in log)          # explicit replace
+    with pytest.raises(ValueError):                                                          # dataset id is validated
+        b.build_fact_sales(TENANT, "bronze_x", {"order_id": "order_id", "order_date": "order_date",
+                                                "net_sales": "net_sales"}, "x'; DROP TABLE y --")
+    results[:] = [2, (0, 0), 2, 1, 4, 1, 0]  # reconciliation failure must raise, not pass silently
     with pytest.raises(AssertionError):
         b.build_fact_sales(TENANT, "bronze_x", {"order_id": "order_id", "order_date": "order_date",
-                                                "net_sales": "net_sales"})
+                                                "net_sales": "net_sales"}, "11111111-2222-3333-4444-555555555555")
 
 
 def test_compiled_plan_is_valid_databricks_sql(dbx):

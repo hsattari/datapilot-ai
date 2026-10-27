@@ -23,6 +23,7 @@ class SourceIn(BaseModel):
 class ApproveIn(BaseModel):
     mapping: dict[str, str]  # canonical field -> source column
     role: Literal["fact_sales", "dim_product", "dim_customer"] = "fact_sales"
+    replace_existing: bool = False   # sales only: discard every other file's rows instead of adding to them
 
 
 class QuestionIn(BaseModel):

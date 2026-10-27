@@ -43,6 +43,12 @@ def model_checks(result: dict, mapping: dict, scalar, today: date | None = None)
     total = loaded + rejected
     out = [_r("reconciliation", "pass" if result.get("reconciled", True) else "fail",
               f"{loaded} loaded + {rejected} quarantined = {total} staged", loaded=loaded, rejected=rejected)]
+    if result.get("rows_replaced"):
+        out.append(_r("replaced_by_later_file", "warn",
+                      f"{result.get('orders_replaced', 0)} orders ({result['rows_replaced']} rows) from earlier files were replaced "
+                      "because this file contains the same order IDs (the latest file wins). "
+                      "If that is not what you intended, check which files overlap.",
+                      orders=result.get("orders_replaced", 0), rows=result["rows_replaced"]))
     rate = rejected / total if total else 0.0
     out.append(_r("rejection_rate", "pass" if not rejected else ("fail" if rate > REJECT_FAIL else "warn"),
                   "No rows quarantined" if not rejected else f"{rejected} rows ({rate:.0%}) failed type checks and were quarantined",

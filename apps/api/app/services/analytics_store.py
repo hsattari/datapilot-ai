@@ -51,8 +51,18 @@ def load_bronze(tenant_id: str, table: str, df: pd.DataFrame) -> None:
         con.close()
 
 
-def build_fact_sales(tenant_id: str, bronze_table: str, mapping: dict[str, str]) -> dict:
-    """Silver/Gold step: cast mapped columns with safe TRY_CAST; reject bad rows to quarantine."""
+_FACT_COLS = "order_id, order_date, net_sales, cost_of_goods_sold, product, region, customer"
+_FACT_DDL = ("order_id VARCHAR, order_date DATE, net_sales DECIMAL(18,2), cost_of_goods_sold DECIMAL(18,2), "
+             "product VARCHAR, region VARCHAR, customer VARCHAR, dataset_id VARCHAR")
+_VALID = "order_id IS NOT NULL AND order_date IS NOT NULL AND net_sales IS NOT NULL"
+
+
+def build_fact_sales(tenant_id: str, bronze_table: str, mapping: dict[str, str],
+                     dataset_id: str = "adhoc", replace_all: bool = False) -> dict:
+    """Silver/Gold step. Sales files ACCUMULATE: each approved sales dataset keeps its rows in silver_sales, and
+    fact_sales is rebuilt from all of them. Upsert by order ID, latest file wins: an order that appears again in a
+    later file replaces the older rows for that order (corrected or cumulative exports), and the number replaced is
+    reported. Bad rows go to quarantine; counts reconcile per file. replace_all discards every other file's rows."""
     bronze_table = ident(bronze_table)
     for col in mapping.values():
         ident(col)
@@ -76,22 +86,44 @@ def build_fact_sales(tenant_id: str, bronze_table: str, mapping: dict[str, str])
     ])
     con = writer(tenant_id)
     try:
+        tables = {r[0] for r in con.execute("SELECT table_name FROM information_schema.tables").fetchall()}
+        con.execute(f"CREATE TABLE IF NOT EXISTS silver_sales ({_FACT_DDL})")
+        if "silver_sales" not in tables and "fact_sales" in tables:  # data built before files accumulated: keep it
+            con.execute(f"INSERT INTO silver_sales SELECT {_FACT_COLS}, 'legacy' FROM fact_sales")
+        if "quarantine_sales" not in tables:
+            con.execute(f"CREATE TABLE quarantine_sales ({_FACT_DDL})")
+        elif "dataset_id" not in {r[0] for r in con.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = 'quarantine_sales'").fetchall()}:
+            con.execute("ALTER TABLE quarantine_sales ADD COLUMN dataset_id VARCHAR")
         con.execute(f'CREATE OR REPLACE TEMP TABLE stg AS SELECT {select} FROM "{bronze_table}"')
-        # Quarantine: unparseable key, date or sales amount (negative amounts are valid refunds).
-        con.execute("CREATE OR REPLACE TABLE quarantine_sales AS SELECT * FROM stg "
-                    "WHERE order_id IS NULL OR order_date IS NULL OR net_sales IS NULL")
-        con.execute("CREATE OR REPLACE TABLE fact_sales AS SELECT * FROM stg "
-                    "WHERE order_id IS NOT NULL AND order_date IS NOT NULL AND net_sales IS NOT NULL")
-        loaded = con.execute("SELECT count(*) FROM fact_sales").fetchone()[0]
-        rejected = con.execute("SELECT count(*) FROM quarantine_sales").fetchone()[0]
         total = con.execute("SELECT count(*) FROM stg").fetchone()[0]
+        con.execute("DELETE FROM silver_sales WHERE dataset_id = ?", [dataset_id])     # re-approving this same file
+        con.execute("DELETE FROM quarantine_sales WHERE dataset_id = ? OR dataset_id IS NULL", [dataset_id])
+        if replace_all:
+            con.execute("DELETE FROM silver_sales WHERE dataset_id <> ?", [dataset_id])
+            con.execute("DELETE FROM quarantine_sales WHERE dataset_id <> ?", [dataset_id])
+        # Upsert by order ID: rows from OTHER files for orders this file contains are replaced by this file's rows.
+        replaced_rows, replaced_orders = con.execute(
+            f"SELECT count(*), count(DISTINCT order_id) FROM silver_sales WHERE order_id IN "
+            f"(SELECT order_id FROM stg WHERE {_VALID})").fetchone()
+        con.execute(f"DELETE FROM silver_sales WHERE order_id IN (SELECT order_id FROM stg WHERE {_VALID})")
+        # Quarantine: unparseable key, date or sales amount (negative amounts are valid refunds).
+        con.execute(f"INSERT INTO silver_sales SELECT {_FACT_COLS}, ? FROM stg WHERE {_VALID}", [dataset_id])
+        con.execute(f"INSERT INTO quarantine_sales SELECT {_FACT_COLS}, ? FROM stg WHERE NOT ({_VALID})", [dataset_id])
+        con.execute(f"CREATE OR REPLACE TABLE fact_sales AS SELECT {_FACT_COLS} FROM silver_sales")
+        loaded = con.execute("SELECT count(*) FROM silver_sales WHERE dataset_id = ?", [dataset_id]).fetchone()[0]
+        rejected = con.execute("SELECT count(*) FROM quarantine_sales WHERE dataset_id = ?", [dataset_id]).fetchone()[0]
+        fact_total = con.execute("SELECT count(*) FROM fact_sales").fetchone()[0]
+        files = con.execute("SELECT count(DISTINCT dataset_id) FROM silver_sales").fetchone()[0]
         cost_missing = con.execute(
             "SELECT count(*) FROM fact_sales WHERE cost_of_goods_sold IS NULL").fetchone()[0]
         assert loaded + rejected == total  # reconcile counts: no silent record loss
     finally:
         con.close()
     return {"rows_loaded": loaded, "rows_rejected": rejected, "cost_missing_rows": cost_missing,
-            "has_cost": "cost_of_goods_sold" in mapping}
+            "has_cost": "cost_of_goods_sold" in mapping, "rows_replaced": replaced_rows,
+            "orders_replaced": replaced_orders, "fact_rows_total": fact_total, "files_in_model": files,
+            "replace_all": replace_all}
 
 
 def build_dimension(tenant_id: str, bronze_table: str, role: str, mapping: dict[str, str]) -> dict:
