@@ -10,6 +10,7 @@
   disable needs password plus a code.
 - **User management:** admins add people (initial password), change roles, deactivate/reactivate; deactivation takes
   effect on the next request; the last active administrator cannot be removed; viewers are read-only.
+- **Organisation policy "require two-step sign-in":** an admin can require it for everyone. People without it can reach only the set-up screens (`/auth/me`, `/auth/mfa/setup`, `/auth/mfa/enable`) and get `403 mfa_enrollment_required` everywhere else, on every request, so it applies to sessions already open. The admin must have two-step on before switching the policy on (no self-lockout); nobody under the policy can switch their own off; an admin can reset a colleague's two-step (lost phone), which is logged as `user.mfa_reset`. Scoped per organisation. Tested: 9 API tests and a browser flow.
 - **Rate limiting:** per IP on register/login/MFA/password endpoints, per user on questions and uploads; 429 with
   Retry-After.
 - **Production guard:** with ENVIRONMENT=production the API refuses to start with a default/short JWT secret, no MFA
@@ -33,7 +34,7 @@
 - Lockout can be used to lock a known user out for 15 minutes (a trade-off for stopping password guessing).
 - Access tokens last 30 minutes and are not revoked on password change; deactivation IS immediate (checked per request).
 - Initial passwords for added users are set by an admin, not by an e-mailed invitation (no e-mail service yet).
-- MFA is optional per user; it is not yet enforced by tenant policy.
+- MFA is optional per user unless an administrator switches on the organisation policy (below). Accounts linked to a company identity provider are exempt from the policy and rely on the provider's own verification (not tested against a real provider).
 - OIDC/Entra is **not tested against a real identity provider** and the web app has no Microsoft sign-in button yet.
 
 ## Outstanding before launch

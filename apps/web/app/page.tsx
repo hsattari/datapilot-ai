@@ -344,15 +344,20 @@ function Activity() {
   </>);
 }
 
-function AccountSecurity() {
+function AccountSecurity({ onLoaded }: { onLoaded?: (me: any) => void }) {
   const [me, setMe] = useState<any>(null);
   const [setup, setSetup] = useState<any>(null);
   const [codes, setCodes] = useState<string[]>([]);
   const [code, setCode] = useState("");
   const [pw, setPw] = useState({ current_password: "", new_password: "" });
   const [msg, setMsg] = useState("");
-  const load = useCallback(() => api("/auth/me").then(setMe).catch(e => setMsg(e.message)), []);
+  const load = useCallback(() => api("/auth/me").then(r => { setMe(r); onLoaded?.(r); }).catch(e => setMsg(e.message)), [onLoaded]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {   // the organisation policy may have just been changed in the settings form above
+    const again = () => { load(); };
+    window.addEventListener("settings-saved", again);
+    return () => window.removeEventListener("settings-saved", again);
+  }, [load]);
   const begin = async () => { try { setSetup(await api("/auth/mfa/setup", { method: "POST" })); setMsg(""); } catch (e: any) { setMsg(e.message); } };
   const enable = async () => {
     try { const r = await api("/auth/mfa/enable", { method: "POST", body: JSON.stringify({ code }) }); setCodes(r.recovery_codes); setSetup(null); setCode(""); await load(); setMsg("Two-step sign-in is on."); }
@@ -370,6 +375,7 @@ function AccountSecurity() {
   return (<div style={card} data-testid="security">
     <h3 style={{ marginTop: 0 }}>Your sign-in</h3>
     <p>{me.email} — two-step sign-in is <b>{me.mfa_enabled ? "on" : "off"}</b>{me.mfa_enabled ? ` (${me.recovery_codes_left} recovery codes left)` : ""}.</p>
+    {me.mfa_required && <p data-testid="mfa-required-note"><b>Your organisation requires two-step sign-in.</b>{me.mfa_enabled ? " It cannot be turned off." : " Set it up below to continue."}</p>}
     {!me.mfa_enabled && !setup && <button onClick={begin}>Set up two-step sign-in</button>}
     {setup && <div>
       <p>Add this key to an authenticator app (Microsoft Authenticator, Google Authenticator, 1Password…), then enter the 6-digit code it shows.</p>
@@ -379,7 +385,7 @@ function AccountSecurity() {
       <button onClick={enable} disabled={code.trim().length < 6}>Turn on</button></div>}
     {codes.length > 0 && <div data-testid="recovery-codes"><p><b>Recovery codes</b> — save them now. Each works once and they are not shown again.</p>
       <pre>{codes.join("\n")}</pre></div>}
-    {me.mfa_enabled && <div><p>To turn it off, enter your password and a current code.</p>
+    {me.mfa_enabled && !me.mfa_required && <div><p>To turn it off, enter your password and a current code.</p>
       <input type="password" placeholder="Current password" value={pw.current_password} onChange={e => setPw({ ...pw, current_password: e.target.value })} />
       <input placeholder="Authenticator or recovery code" value={code} onChange={e => setCode(e.target.value)} />
       <button onClick={disable}>Turn off</button></div>}
@@ -415,6 +421,7 @@ function Users() {
         <td><select value={u.role} onChange={e => patch(u.id, { role: e.target.value })}><option>admin</option><option>analyst</option><option>viewer</option></select></td>
         <td>{u.mfa_enabled ? "on" : "off"}</td><td>{u.active ? "active" : "deactivated"}</td>
         <td><button onClick={() => patch(u.id, { active: !u.active })}>{u.active ? "Deactivate" : "Reactivate"}</button>{" "}
+          {u.mfa_enabled && <><button onClick={() => patch(u.id, { reset_mfa: true })} style={{ background: "#6b7280" }} title="Use when someone loses their phone: they set it up again at next sign-in">Reset two-step</button>{" "}</>}
           {erasing === u.id
             ? <><button onClick={() => erase(u.id, u.email)} style={{ background: "#b00020" }}>Confirm erase</button> <button onClick={() => setErasing("")}>Cancel</button></>
             : <button onClick={() => setErasing(u.id)} style={{ background: "#6b7280" }}>Erase</button>}</td></tr>)}</tbody></table>
@@ -462,17 +469,17 @@ function YourData() {
 }
 
 function Settings() {
-  const [f, setF] = useState({ name: "", currency: "", timezone: "", auto_model: true });
+  const [f, setF] = useState({ name: "", currency: "", timezone: "", auto_model: true, require_mfa: false });
   const [role, setRole] = useState("");
   const [msg, setMsg] = useState("");
   const [loaded, setLoaded] = useState(false);
   useEffect(() => {
     let live = true;
-    api("/settings").then(r => { if (!live) return; setF({ name: r.name, currency: r.currency, timezone: r.timezone, auto_model: r.auto_model }); setRole(r.your_role); setLoaded(true); })
+    api("/settings").then(r => { if (!live) return; setF({ name: r.name, currency: r.currency, timezone: r.timezone, auto_model: r.auto_model, require_mfa: r.require_mfa }); setRole(r.your_role); setLoaded(true); })
       .catch(e => live && setMsg(e.message));
     return () => { live = false; };
   }, []);
-  const save = async () => { try { await api("/settings", { method: "PATCH", body: JSON.stringify(f) }); setMsg("Saved."); } catch (e: any) { setMsg(e.message); } };
+  const save = async () => { try { await api("/settings", { method: "PATCH", body: JSON.stringify(f) }); setMsg("Saved."); window.dispatchEvent(new Event("settings-saved")); } catch (e: any) { setMsg(e.message); } };
   return (<><div style={card}>
     <p style={{ marginTop: 0 }}>Your role: <b>{role}</b>. Only administrators can change settings.</p>
     <label>Organisation<input disabled={!loaded} value={f.name} onChange={e => setF(v => ({ ...v, name: e.target.value }))} /></label>
@@ -482,6 +489,10 @@ function Settings() {
       onChange={e => setF(v => ({ ...v, auto_model: e.target.checked }))} style={{ display: "inline", width: "auto", marginRight: 6 }} />
       Build models and approve standard metrics automatically when uploaded columns are recognised</label>
     <p style={{ margin: "0 0 8px", fontSize: 13 }}>Anything unclear is still left for a person to confirm, and every automatic step is recorded in the Activity log. Turn this off if every model and metric must be approved by hand.</p>
+    <label style={{ display: "block", margin: "8px 0" }}><input type="checkbox" disabled={!loaded || role !== "admin"} checked={f.require_mfa}
+      onChange={e => setF(v => ({ ...v, require_mfa: e.target.checked }))} style={{ display: "inline", width: "auto", marginRight: 6 }} />
+      Require two-step sign-in for everyone in this organisation</label>
+    <p style={{ margin: "0 0 8px", fontSize: 13 }}>People who have not set it up can only reach the set-up screen until they do. You must have it on for your own account first. People who sign in through a company identity provider use that provider's own checks.</p>
     <button onClick={save} disabled={!loaded || role !== "admin"}>Save settings</button> {msg && <span role="status">{msg}</span>}
   </div>{role === "admin" && <YourData />}</>);
 }
@@ -489,7 +500,25 @@ function Settings() {
 export default function Page() {
   const [authed, setAuthed] = useState(false);
   const [tab, setTab] = useState<Tab>("home");
+  const [enrol, setEnrol] = useState(false);            // organisation requires two-step and this person has not set it up
+  const [enrolMe, setEnrolMe] = useState<any>(null);
+  useEffect(() => {
+    if (!authed) return;
+    api("/auth/me").then(r => setEnrol(!!r.mfa_enrollment_needed)).catch(() => {});
+    const on = () => setEnrol(true);
+    window.addEventListener("mfa-needed", on);
+    return () => window.removeEventListener("mfa-needed", on);
+  }, [authed]);
   if (!authed) return <Auth onAuthed={() => setAuthed(true)} />;
+  if (enrol) return (
+    <main style={{ maxWidth: 900, margin: "0 auto", padding: 24 }} data-testid="mfa-enrol">
+      <div style={card}>
+        <h2 style={{ marginTop: 0 }}>Set up two-step sign-in to continue</h2>
+        <p>Your organisation requires two-step sign-in. Add DataPilot to an authenticator app, enter the code, and save your recovery codes.</p>
+      </div>
+      <AccountSecurity onLoaded={setEnrolMe} />
+      {enrolMe?.mfa_enabled && <button onClick={() => setEnrol(false)}>I have saved my recovery codes - continue</button>}
+    </main>);
   return (
     <main style={{ maxWidth: 900, margin: "0 auto", padding: 24 }}>
       <nav style={{ marginBottom: 16 }}>

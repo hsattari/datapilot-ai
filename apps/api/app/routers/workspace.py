@@ -179,13 +179,14 @@ class SettingsIn(BaseModel):
     currency: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
     timezone: str | None = Field(default=None, max_length=64)
     auto_model: bool | None = None
+    require_mfa: bool | None = None
 
 
 @router.get("/settings")
 def get_settings_(p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     t = db.get(m.Tenant, p.tenant_id)
     return {"name": t.name, "currency": t.currency, "timezone": t.timezone, "auto_model": t.auto_model,
-            "your_role": p.role}
+            "require_mfa": t.require_mfa, "your_role": p.role}
 
 
 @router.patch("/settings")
@@ -203,6 +204,14 @@ def update_settings(body: SettingsIn, p: Principal = Depends(require_admin), db:
         t.currency = body.currency
     if body.auto_model is not None:
         t.auto_model = body.auto_model
+    if body.require_mfa is not None:
+        if body.require_mfa:
+            me_ = db.get(m.User, p.user_id)
+            sso = db.scalar(select(m.UserIdentity.id).where(m.UserIdentity.user_id == p.user_id))
+            if not me_.mfa_enabled and not sso:
+                raise HTTPException(422, "Turn on two-step sign-in for your own account first, so you are not locked out")
+        t.require_mfa = body.require_mfa
     audit(db, p, "settings.updated", **body.model_dump(exclude_none=True))
     db.commit()
-    return {"name": t.name, "currency": t.currency, "timezone": t.timezone, "auto_model": t.auto_model}
+    return {"name": t.name, "currency": t.currency, "timezone": t.timezone, "auto_model": t.auto_model,
+            "require_mfa": t.require_mfa}

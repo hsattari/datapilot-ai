@@ -142,7 +142,7 @@ def test_settings_roles_and_validation(client):
     h, t = register(client, "Set", "w@set.test")
     assert client.get("/api/v1/settings", headers=h).json()["your_role"] == "admin"
     r = client.patch("/api/v1/settings", json={"name": "Renamed Ltd", "currency": "EUR", "timezone": "Europe/Paris"}, headers=h)
-    assert r.status_code == 200 and r.json() == {"name": "Renamed Ltd", "currency": "EUR", "timezone": "Europe/Paris", "auto_model": False}
+    assert r.status_code == 200 and r.json() == {"name": "Renamed Ltd", "currency": "EUR", "timezone": "Europe/Paris", "auto_model": False, "require_mfa": False}
     for bad in ({"currency": "euro"}, {"currency": "eur"}, {"timezone": "Mars/Base"}, {"name": ""}):
         assert client.patch("/api/v1/settings", json=bad, headers=h).status_code == 422
     v = add_viewer(t)

@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from .. import models as m
 from ..config import get_settings
 from ..db import get_db
-from ..deps import Principal, get_principal, require_admin
+from ..deps import Principal, get_principal, mfa_enrolment_needed, require_admin
 from ..schemas import LoginIn
 from ..security import create_token, hash_password, verify_password
 from ..services import oidc, ratelimit, totp
@@ -95,8 +95,11 @@ def _me(db: Session, p: Principal) -> m.User:
 @router.get("/auth/me")
 def me(p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     u = _me(db, p)
+    t = db.get(m.Tenant, p.tenant_id)
     return {"email": u.email, "role": p.role, "mfa_enabled": u.mfa_enabled,
-            "recovery_codes_left": len(u.mfa_recovery or []) if u.mfa_enabled else 0}
+            "recovery_codes_left": len(u.mfa_recovery or []) if u.mfa_enabled else 0,
+            "mfa_required": bool(t and t.require_mfa),
+            "mfa_enrollment_needed": mfa_enrolment_needed(db, u, p.tenant_id)}
 
 
 @router.post("/auth/mfa/setup", dependencies=[AUTH_LIMIT])
@@ -131,6 +134,9 @@ def mfa_enable(body: CodeIn, p: Principal = Depends(get_principal), db: Session 
 @router.post("/auth/mfa/disable", dependencies=[AUTH_LIMIT])
 def mfa_disable(body: DisableIn, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     u = _me(db, p)
+    t = db.get(m.Tenant, p.tenant_id)
+    if t and t.require_mfa and not db.scalar(select(m.UserIdentity.id).where(m.UserIdentity.user_id == u.id)):
+        raise HTTPException(409, "Your organisation requires two-step sign-in, so it cannot be turned off")
     if not u.mfa_enabled:
         raise HTTPException(409, "MFA is not enabled")
     secret = totp.decrypt_secret(u.mfa_secret or "")
@@ -171,6 +177,7 @@ class UserIn(BaseModel):
 class UserPatch(BaseModel):
     role: Literal["admin", "analyst", "viewer"] | None = None
     active: bool | None = None
+    reset_mfa: bool | None = None   # lost phone: clears their two-step setup so they can enrol again
 
 
 def _user_json(u: m.User, role: str) -> dict:
@@ -215,6 +222,9 @@ def update_user(user_id: str, body: UserPatch, p: Principal = Depends(require_ad
         if admins <= 1:
             raise HTTPException(422, "At least one active administrator is required")
     mem.role, u.disabled = new_role, not new_active
+    if body.reset_mfa:
+        u.mfa_enabled, u.mfa_secret, u.mfa_recovery, u.mfa_last_step = False, None, [], None
+        audit(db, p, "user.mfa_reset", user_id=user_id)
     audit(db, p, "user.updated", user_id=user_id, role=new_role, active=new_active)
     db.commit()
     return _user_json(u, mem.role)

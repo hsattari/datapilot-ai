@@ -25,6 +25,8 @@ class Tenant(Base):
     timezone: Mapped[str] = mapped_column(String(64), default="Europe/London")
     # Build models and approve the built-in metrics automatically when the uploaded columns are recognised.
     auto_model: Mapped[bool] = mapped_column(Boolean, default=True, server_default=sa.true())
+    # Organisation policy: everyone with a password sign-in must use two-step verification (SSO accounts rely on the IdP).
+    require_mfa: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sa.false())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 

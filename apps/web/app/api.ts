@@ -7,7 +7,11 @@ export async function api<T = any>(path: string, init: RequestInit = {}): Promis
   if (init.body && !(init.body instanceof FormData)) headers["Content-Type"] = "application/json";
   const r = await fetch(`/api/v1${path}`, { ...init, headers });
   const body = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(typeof body.detail === "string" ? body.detail : `Request failed (${r.status})`);
+  if (!r.ok) {
+    // The organisation now requires two-step sign-in and this person has not set it up: the app shows the enrolment screen.
+    if (r.status === 403 && body.detail === "mfa_enrollment_required" && typeof window !== "undefined") window.dispatchEvent(new Event("mfa-needed"));
+    throw new Error(typeof body.detail === "string" ? body.detail : `Request failed (${r.status})`);
+  }
   return body as T;
 }
 
