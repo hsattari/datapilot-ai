@@ -37,7 +37,9 @@ function Auth({ onAuthed }: { onAuthed: () => void }) {
 function Home() {
   const [tiles, setTiles] = useState<any[]>([]);
   const [hot, setHot] = useState<any[]>([]);
+  const [ins, setIns] = useState<any[]>([]);
   useEffect(() => {
+    api("/insights").then(r => setIns(r.insights)).catch(() => {});
     api("/dashboard").then(r => setTiles(r.tiles)).catch(() => {});
     api("/alerts").then(r => setHot(r.filter((a: any) => a.last_state === "triggered"))).catch(() => {});
   }, []);
@@ -45,8 +47,15 @@ function Home() {
     <b style={{ color: "#b00020" }}>{hot.length === 1 ? "1 alert is triggered" : `${hot.length} alerts are triggered`}</b>
     {hot.map(a => <div key={a.id}>{a.name}: {a.metric} is {a.last_value} ({a.comparison} {a.threshold})</div>)}
     <small>Details and checks are under Alerts.</small></div>;
+  const insights = ins.length > 0 && <div style={card} data-testid="insights">
+    <h3 style={{ marginTop: 0 }}>Insights</h3>
+    {ins.map(i => <div key={i.metric} style={{ marginBottom: 8 }}>
+      <div>{i.headline}</div>
+      {i.anomaly && <div style={{ color: "#8a5a00" }}>Unusual: {i.anomaly.month} is {Math.abs(i.anomaly.z_score)} standard deviations {i.anomaly.z_score > 0 ? "above" : "below"} its recent average.</div>}
+    </div>)}
+    <small>Computed from your approved metrics. It shows where numbers moved, not why; ask "Why did gross profit change?" under Ask Your Data for the breakdown by product, region and customer.</small></div>;
   if (!tiles.length) return <>{banner}<div style={card}>No approved metrics with data yet. Upload a file under Data Sources and the model is set up for you when the columns are clear.</div></>;
-  return <>{banner}{tiles.map(t => (
+  return <>{banner}{insights}{tiles.map(t => (
     <div key={t.metric} style={card}>
       <h3 style={{ margin: 0 }}>{t.label}: {Number(t.total).toLocaleString()}</h3>
       {t.caveats.map((c: string) => <small key={c} style={{ color: "#8a5a00" }}>{c}</small>)}
@@ -222,6 +231,26 @@ function Metrics() {
     </div></>);
 }
 
+function Explanation({ a }: { a: any }) {
+  const money = (v: number) => Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return <div data-testid="explanation">
+    <p style={{ fontWeight: 600, marginTop: 0 }} data-testid="explanation-headline">{a.headline}</p>
+    {a.anomaly?.flagged && <p data-testid="anomaly" style={{ background: "#fff6e5", padding: 8, borderRadius: 6 }}>
+      Unusual: {a.anomaly.month} was {money(a.anomaly.value)} against an average of {money(a.anomaly.baseline_mean)} over the previous {a.anomaly.baseline_months} months.</p>}
+    {Object.entries<any[]>(a.drivers || {}).map(([dim, rows]) => <div key={dim}>
+      <h4 style={{ margin: "12px 0 4px" }}>Where it changed, by {dim}</h4>
+      <table data-testid={`drivers-${dim}`}><thead><tr><th>{dim}</th><th>Before</th><th>Now</th><th>Change</th><th>Share of total change</th></tr></thead>
+        <tbody>{rows.map(r => <tr key={r.member}><td>{r.member}{r.status !== "changed" ? ` (${r.status})` : ""}</td><td>{money(r.previous)}</td><td>{money(r.current)}</td>
+          <td style={{ color: r.change < 0 ? "#b00020" : r.change > 0 ? "#1a7f37" : undefined }}>{r.change > 0 ? "+" : ""}{money(r.change)}</td>
+          <td>{r.share_of_change === null ? "-" : `${r.share_of_change}%`}</td></tr>)}</tbody></table></div>)}
+    <details><summary>How this was calculated</summary>
+      <p><b>{a.metric.label}</b>: {a.metric.definition} (<code>{a.metric.expression}</code>, v{a.metric.version})</p>
+      <p>Compared {a.period.current.join(", ")} with {a.period.previous.join(", ")}. Data up to {a.freshness.latest_order_date}.</p>
+      {a.sql.map((q: string, i: number) => <pre key={i}>{q}</pre>)}</details>
+    {a.caveats.map((c: string) => <p key={c}><small>{c}</small></p>)}
+  </div>;
+}
+
 function Ask() {
   const [q, setQ] = useState("");
   const [a, setA] = useState<any>(null);
@@ -235,7 +264,10 @@ function Ask() {
   return (<>
     <div style={card}><input style={{ width: "70%" }} placeholder="e.g. Why has gross profit changed over the last 3 months? Or: net revenue by category" value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => e.key === "Enter" && go()} /> <button onClick={go}>Ask</button></div>
     {a && <div style={card}>
-      {a.outcome !== "answered" ? <p>{a.message}</p> : <>
+      {a.outcome === "explanation" ? <>
+        <Explanation a={a} />
+        <p><button onClick={save}>Save as report</button> <small role="status">{saved}</small></p>
+      </> : a.outcome !== "answered" ? <p>{a.message}</p> : <>
         <table><thead><tr>{a.columns.map((c: string) => <th key={c}>{c}</th>)}</tr></thead>
           <tbody>{a.rows.map((r: any[], i: number) => <tr key={i}>{r.map((v, j) => <td key={j}>{String(v)}</td>)}</tr>)}</tbody></table>
         <details><summary>How this was calculated</summary>
@@ -249,6 +281,7 @@ function Ask() {
 }
 
 function ResultTable({ a }: { a: any }) {
+  if (a.outcome === "explanation") return <Explanation a={a} />;
   if (a.outcome !== "answered") return <p>{a.message}</p>;
   return <>
     <table><thead><tr>{a.columns.map((c: string) => <th key={c}>{c}</th>)}</tr></thead>

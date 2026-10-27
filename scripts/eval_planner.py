@@ -51,6 +51,13 @@ def judge(case, res):
     expect = case["expect"] if isinstance(case["expect"], list) else [case["expect"]]
     if res.outcome not in expect:
         return [f"outcome {res.outcome!r}, wanted {'/'.join(expect)}"]
+    if res.outcome == "explain":
+        bad = []
+        if "metric" in case and res.metric != case["metric"]:
+            bad.append(f"metric {res.metric!r}, wanted {case['metric']!r}")
+        if "months" in case and res.months != case["months"]:
+            bad.append(f"months {res.months}, wanted {case['months']}")
+        return bad
     if res.outcome != "plan":
         return []
     p, bad = res.plan, []

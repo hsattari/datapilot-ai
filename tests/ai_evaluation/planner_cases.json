@@ -14,7 +14,11 @@
   {"id": "revenue_by_segment", "question": "Revenue by customer segment", "expect": "plan", "metric": "net_revenue", "dimensions": ["segment"]},
   {"id": "two_dimensions",     "question": "Gross profit by product for each month", "expect": "plan", "metric": "gross_profit", "dimensions": ["month", "product"], "intent": "compare_metric_over_time"},
   {"id": "filter_and_window",  "question": "Widget revenue over the last 3 months", "expect": "plan", "metric": "net_revenue", "months": 3, "filters": [{"field": "product", "value": "Widget"}]},
-  {"id": "why_profit_changed", "question": "Why has gross profit changed over the last 3 months?", "expect": "plan", "metric": "gross_profit", "dimensions": ["month"], "months": 3},
+  {"id": "why_profit_changed", "question": "Why has gross profit changed over the last 3 months?", "expect": "explain", "metric": "gross_profit", "months": 3},
+  {"id": "what_drove_revenue", "question": "What drove the change in revenue?", "expect": "explain", "metric": "net_revenue", "months": 1},
+  {"id": "why_turnover_dropped", "question": "Why did turnover drop last month?", "expect": "explain", "metric": "net_revenue", "months": 1},
+  {"id": "anomalies_in_sales", "question": "Are there any anomalies in sales?", "expect": "explain", "metric": "net_revenue", "months": 1},
+  {"id": "why_unknown_metric", "question": "Why did things get worse?", "expect": "clarification"},
 
   {"id": "margin_percent",     "question": "What is our profit margin percentage?", "expect": "clarification"},
   {"id": "forecast",           "question": "Forecast next quarter's sales", "expect": "clarification"},

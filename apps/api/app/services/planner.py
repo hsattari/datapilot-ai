@@ -14,10 +14,10 @@ from ..config import get_settings
 from .query_engine import Plan
 
 REFUSE = re.compile(
-    r"\b(drop|delete|truncate|insert|update|alter|grant|revoke|create table|exec|"
+    r"\b(drop\s+(table|database|schema|view|index|column|user|role)s?|delete|truncate|insert|update|alter|grant|revoke|create table|exec|"
     r"other tenants?|another (company|tenant|organisation)|all tenants?|export (all|everything)|"
     r"other (companies|company|organi[sz]ations?)|(this|the) platform'?s? (other )?(customers|users|clients|companies)|"
-    r"salar(y|ies)|payroll|ignore (all |previous |the )?(instructions|rules))\b", re.I)
+    r"salar(y|ies)|payroll|ignore\s+(all\s+|previous\s+|prior\s+|above\s+|the\s+|your\s+|any\s+)*(instructions|rules))\b", re.I)
 METRIC_WORDS = {
     "net_revenue": ["revenue", "sales", "turnover"],
     "gross_profit": ["profit"],
@@ -27,6 +27,31 @@ DIM_WORDS = {"month": ["month", "monthly", "over time", "trend", "fallen", "drop
              "product": ["product", "item", "sku"], "region": ["region", "area"],
              "customer": ["customer", "client"], "category": ["category", "categories"],
              "segment": ["segment"]}
+
+
+# "Why did it change?" questions get a deterministic driver analysis (services/insights.py), never a model-written
+# explanation and never a plain total.
+EXPLAIN = re.compile(r"\b(why|what\s+(?:drove|caused|explains?|is\s+behind|was\s+behind|contributed|changed|happened)|"
+                     r"drove|drivers?|driving|caused|reasons?|explain|behind|contribut\w+|anomal\w+|unusual|outliers?)\b", re.I)
+_NUM_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
+              "ten": 10, "eleven": 11, "twelve": 12}
+
+
+def explain_request(question: str, approved: dict[str, str]) -> "PlanResult | None":
+    q = question.lower()
+    if not EXPLAIN.search(q):
+        return None
+    metric = next((m for m, ws in METRIC_WORDS.items() if any(w in q for w in ws)), None)
+    if metric is None:
+        return PlanResult("clarification", "Which metric do you want explained? Approved metrics: " + ", ".join(sorted(approved)))
+    if metric not in approved:
+        return PlanResult("clarification", f"'{metric}' is not an approved metric yet. "
+                          "Confirm its definition and required source data first.")
+    n = 1
+    m = re.search(r"last\s+(\d+|" + "|".join(_NUM_WORDS) + r")\s+months?", q)
+    if m:
+        n = int(m.group(1)) if m.group(1).isdigit() else _NUM_WORDS[m.group(1)]
+    return PlanResult("explain", metric=metric, months=max(1, min(n, 12)))
 
 
 # Things a plan cannot express. The rule planner must ask, never answer a different question than the one asked.
@@ -73,11 +98,13 @@ def _extract_filters(question: str) -> tuple[list[dict], str, set[str]]:
 
 @dataclass
 class PlanResult:
-    outcome: str  # plan | refusal | clarification
+    outcome: str  # plan | refusal | clarification | explain
     message: str = ""
     plan: Plan | None = None
     source: str = "rules"                 # rules | llm  (shown to the caller so a silent fallback is visible)
     fallback_reason: str | None = None    # exception type or "not_configured" when the model path was not used
+    metric: str | None = None             # explain: the approved metric to decompose
+    months: int = 1                       # explain: compare the last N complete months with the N before
 
 
 def rule_plan(question: str, approved: dict[str, str]) -> PlanResult:
@@ -86,6 +113,9 @@ def rule_plan(question: str, approved: dict[str, str]) -> PlanResult:
         return PlanResult("refusal", "I can only answer read-only questions about your own approved metrics.")
     if UNSUPPORTED.search(q):
         return PlanResult("clarification", UNSUPPORTED_MSG)
+    ex = explain_request(question, approved)
+    if ex is not None:
+        return ex
     metric = next((m for m, ws in METRIC_WORDS.items() if any(w in q for w in ws)), None)
     if metric is None:
         return PlanResult("clarification", "Which metric do you mean? Approved metrics: "
@@ -220,6 +250,9 @@ def make_plan(question: str, approved: dict[str, str], unapproved: dict[str, str
         return PlanResult("refusal", "I can only answer read-only questions about your own approved metrics.")
     if UNSUPPORTED.search(question.lower()):  # a plan cannot express these; do not let a model answer another question
         return PlanResult("clarification", UNSUPPORTED_MSG)
+    ex = explain_request(question, approved)  # before the model: a decomposition is computed, not generated
+    if ex is not None:
+        return ex
     res, reason = llm_plan(question, approved, unapproved)
     if res is not None:
         return res

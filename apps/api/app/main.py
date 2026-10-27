@@ -20,7 +20,7 @@ from .schemas import ApproveIn, QuestionIn, RegisterIn, SourceIn
 from .security import create_token, hash_password
 from .services.backends import get_backend
 from .services.common import audit, owned, run_plan
-from .services import modelling, quality, semantic
+from .services import insights, modelling, quality, semantic
 from .services.planner import make_plan
 from .services.query_engine import QueryRejected
 from .services.storage import get_storage, safe_filename
@@ -247,6 +247,28 @@ def analytics_query(body: QuestionIn, p: Principal = Depends(get_principal), db:
     unapproved = {x.name: x.description for x in db.scalars(select(m.Metric).where(
         m.Metric.tenant_id == p.tenant_id, m.Metric.status != "approved"))}
     res = make_plan(body.question, approved, unapproved)
+    if res.outcome == "explain":
+        try:
+            out = insights.explain_change(db, p, res.metric, res.months)
+        except insights.NotEnoughData as e:
+            db.add(m.AnalyticalQuery(tenant_id=p.tenant_id, user_id=p.user_id, question=body.question[:1000],
+                                     outcome="clarification"))
+            audit(db, p, "query.clarification")
+            db.commit()
+            return {"outcome": "clarification", "message": str(e), "planner": res.source}
+        except QueryRejected as e:
+            audit(db, p, "query.rejected", reason=str(e))
+            db.commit()
+            return {"outcome": "refusal", "message": str(e)}
+        except Exception:
+            return {"outcome": "clarification",
+                    "message": "No approved data model is available yet. Upload and approve a dataset first."}
+        db.add(m.AnalyticalQuery(tenant_id=p.tenant_id, user_id=p.user_id, question=body.question[:1000],
+                                 plan={"intent": "explain_change", "metric": res.metric, "months": res.months},
+                                 sql_text="\n".join(out["sql"]), outcome="answered"))
+        audit(db, p, "query.explained", metric=res.metric)
+        db.commit()
+        return {"outcome": "explanation", "planner": res.source, **out}
     if res.outcome != "plan":
         db.add(m.AnalyticalQuery(tenant_id=p.tenant_id, user_id=p.user_id, question=body.question[:1000],
                                  outcome=res.outcome))
@@ -267,6 +289,14 @@ def analytics_query(body: QuestionIn, p: Principal = Depends(get_principal), db:
     audit(db, p, "query.answered", metric=res.plan.metric)
     db.commit()
     return {"outcome": "answered", "plan": res.plan.model_dump(), "planner": res.source, **out}
+
+
+@app.get("/api/v1/insights")
+def get_insights(p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+    """Month-over-month change and anomaly flags for each approved metric, from the same governed queries."""
+    names = [x.name for x in db.scalars(select(m.Metric).where(m.Metric.tenant_id == p.tenant_id,
+                                                              m.Metric.status == "approved").order_by(m.Metric.name))]
+    return {"insights": insights.overview(db, p, names)}
 
 
 @app.get("/api/v1/dashboard")

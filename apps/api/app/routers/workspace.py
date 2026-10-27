@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from .. import models as m
 from ..db import get_db
 from ..deps import Principal, get_principal, require_admin, require_writer
+from ..services import insights
 from ..services.alerts import evaluate_alert
 from ..services.common import audit, owned, run_plan
 from ..services.planner import make_plan
@@ -35,6 +36,21 @@ def create_report(body: ReportIn, p: Principal = Depends(require_writer), db: Se
     unapproved = {x.name: x.description for x in db.scalars(select(m.Metric).where(
         m.Metric.tenant_id == p.tenant_id, m.Metric.status != "approved"))}
     res = make_plan(body.question, approved, unapproved)
+    if res.outcome == "explain":   # a "why did it change?" report: stored as a small spec, recomputed on every run
+        try:
+            insights.explain_change(db, p, res.metric, res.months)
+        except insights.NotEnoughData as e:
+            raise HTTPException(422, str(e))
+        except QueryRejected as e:
+            raise HTTPException(422, str(e))
+        except Exception:
+            raise HTTPException(422, "No approved data model is available yet. Upload and approve a dataset first.")
+        r = m.Report(tenant_id=p.tenant_id, title=body.title, question=body.question,
+                     plan={"intent": "explain_change", "metric": res.metric, "months": res.months}, created_by=p.user_id)
+        db.add(r)
+        audit(db, p, "report.created", title=body.title)
+        db.commit()
+        return {"id": r.id, "title": r.title}
     if res.outcome != "plan":
         raise HTTPException(422, res.message or "That question cannot be saved as a report")
     try:
@@ -60,6 +76,19 @@ def list_reports(p: Principal = Depends(get_principal), db: Session = Depends(ge
 @router.get("/reports/{report_id}/run")
 def run_report(report_id: str, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     r = owned(db, m.Report, report_id, p.tenant_id)
+    if r.plan.get("intent") == "explain_change":
+        try:   # metric approval is re-checked inside, exactly as for any other report
+            out = insights.explain_change(db, p, r.plan["metric"], int(r.plan.get("months", 1)))
+        except insights.NotEnoughData as e:
+            return {"outcome": "clarification", "message": str(e), "title": r.title}
+        except QueryRejected as e:
+            return {"outcome": "refusal", "message": str(e), "title": r.title}
+        except Exception:
+            return {"outcome": "clarification", "title": r.title,
+                    "message": "No approved data model is available for this report right now."}
+        audit(db, p, "report.run", report_id=r.id)
+        db.commit()
+        return {"outcome": "explanation", "title": r.title, **out}
     try:
         out = run_plan(db, p, Plan(**r.plan))  # metric approval and dimensions are re-checked on every run
     except QueryRejected as e:
