@@ -15,7 +15,7 @@ Status words, used strictly:
 | Module | Status | Detail |
 |---|---|---|
 | Onboarding and workspaces | Partial | Registration, organisation name, currency, time zone, users, roles: **Tested**. Not built: business description, consent capture, subscription limits, separate workspaces inside one organisation |
-| Source management | Partial | CSV, XLSX, TXT, JSON, JSONL: **Tested** locally. In Azure the web app opens and works (owner), the storage layer was checked directly, but an upload through ClamAV and the worker has **not yet been confirmed** since the Azure Files fix. Not built: XML, API connectors, database connectors, `POST /data-sources/{id}/sync`. Schema history: **Tested** |
+| Source management | Partial | CSV, XLSX, TXT, JSON, JSONL: **Tested** locally. In Azure the web app opens and works (owner), the storage layer was checked directly, but an upload through ClamAV and the worker has **not yet been confirmed** since the Azure Files fix. XML upload: **Tested** (hardened parser, see below). Not built: API connectors, database connectors, `POST /data-sources/{id}/sync`. Schema history: **Tested** |
 | Automated data engineering | Partial | Schema inference, profiling, mapping suggestions with confidence, quarantine, reconciled counts, retries with backoff, quality checks: **Tested**. Sales files accumulate with upsert by order ID (latest file wins, reported): **Tested**. Not built: lineage view, watermarks / API cursors / CDC, snapshots |
 | Business intelligence | Partial | Home dashboard tiles, monthly trend, automatic insights and anomaly flag, "why did it change" driver analysis, saved reports: **Tested**. Not built: industry templates other than retail, a separate Dashboards page with saved dashboards, scheduled report delivery, weekly management summary |
 | Conversational analytics | Partial | Structured plan, governed metrics, safe SQL, provenance, caveats, refusals: **Tested**; planner **Verified** live 29/29. Not built: follow-up context (no conversation history), answer feedback, permission-controlled export of an answer |
@@ -30,7 +30,8 @@ Status words, used strictly:
 | Next.js + FastAPI + PostgreSQL + ADLS Gen2 | **Verified** | Running in Azure Container Apps; ADLS and PostgreSQL checked by `scripts/test_azure_resources.py` |
 | Starter profile (DuckDB) | Tested | One file per tenant on an Azure Files share in Azure. SMB has no byte-range locks; worker and API open the file one after the other. Not load-tested |
 | dbt Core retail template | **Verified** | `dbt build` 8/8 pass (dbt 1.12 + DuckDB), also in CI. Other warehouses not tested. Not built: snapshots, exposures |
-| File validation, size/parser limits, checksum | Tested | Malware scanning: tested against a **fake** ClamAV only |
+| File validation, size/parser limits, checksum | Tested | XML: DOCTYPE and entity declarations are refused before parsing and again by the parser (XXE and entity-expansion attacks tested); depth, element and column caps |
+| Malware scanning of uploads | Tested | Against a **fake** ClamAV only; a real daemon has not been tried |
 | Bronze / Silver / Gold | Tested | |
 | Databricks adapter, Unity Catalog, PySpark template | Partial | Connection **Verified** live ("ALL Passed"). Schema-per-tenant build, dimension build and accumulate path: mock-tested only |
 | Fabric (Pipelines, Dataflow Gen2, Lakehouse, Direct Lake) | Not built | Needs the owner's licensed Fabric capacity. Guidance in `docs/architecture/fabric-powerbi.md` |
@@ -118,7 +119,7 @@ Not built: product analytics for activation, time to first dashboard, retention 
 
 1. ~~Cost controls: quotas~~ (done, see section 17-18; token budgets and billing still open).
 2. ~~Complete the MCP tool set~~ (done).
-3. XML upload.
+3. ~~XML upload~~ (done).
 4. Lineage view.
 5. Weekly management summary and a Dashboards page.
 6. Conversations (follow-up context), answer feedback and answer export.

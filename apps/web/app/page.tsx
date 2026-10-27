@@ -154,7 +154,7 @@ function Sources() {
   };
   return (<>
     <div style={card}>
-      <input type="file" multiple accept=".csv,.xlsx,.txt,.json,.jsonl" aria-label="Choose files to upload"
+      <input type="file" multiple accept=".csv,.xlsx,.txt,.json,.jsonl,.xml" aria-label="Choose files to upload"
         onChange={e => { const fs = Array.from(e.target.files || []); e.target.value = ""; if (fs.length) uploadMany(fs); }} /> <span>{msg}</span>
       {results.length > 0 && <ul data-testid="upload-results" style={{ margin: "8px 0 0", paddingLeft: 18 }}>
         {results.map((r, i) => <li key={i}>{r.name} - {r.status}</li>)}</ul>}

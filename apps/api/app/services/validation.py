@@ -1,7 +1,7 @@
 """Upload validation: extension, signature, size, content. Macros are never executed."""
 from pathlib import Path
 
-ALLOWED = {".xlsx", ".csv", ".txt", ".json", ".jsonl"}
+ALLOWED = {".xlsx", ".csv", ".txt", ".json", ".jsonl", ".xml"}
 
 
 class UploadRejected(ValueError):
@@ -25,4 +25,12 @@ def validate_upload(filename: str, data: bytes, max_mb: int) -> str:
     else:
         if b"\x00" in data[:8192]:
             raise UploadRejected("Binary content detected in text file")
+    if ext == ".xml":
+        head = data[:4096].lstrip(b"\xef\xbb\xbf \t\r\n")
+        if not head.startswith(b"<"):
+            raise UploadRejected("File content does not look like XML")
+        # Entity declarations are how XML bombs and external-file reads work; data files never need them.
+        low = data.lower()
+        if b"<!doctype" in low or b"<!entity" in low:
+            raise UploadRejected("XML with a DOCTYPE or entity declarations is not accepted")
     return ext

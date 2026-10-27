@@ -24,3 +24,4 @@ azure-monitor-opentelemetry-exporter>=1.0.0b25
 pytest>=8.0
 mcp>=1.0,<2
 databricks-sql-connector>=3.0
+defusedxml>=0.7.1,<0.8
