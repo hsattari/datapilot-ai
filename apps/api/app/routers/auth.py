@@ -13,7 +13,7 @@ from ..db import get_db
 from ..deps import Principal, get_principal, mfa_enrolment_needed, require_admin
 from ..schemas import LoginIn
 from ..security import create_token, hash_password, verify_password
-from ..services import oidc, ratelimit, totp
+from ..services import oidc, quotas, ratelimit, totp
 from ..services.common import audit
 
 router = APIRouter(prefix="/api/v1")
@@ -196,6 +196,7 @@ def add_user(body: UserIn, p: Principal = Depends(require_admin), db: Session = 
     email = body.email.lower()
     if db.scalar(select(m.User).where(m.User.email == email)):
         raise HTTPException(409, "Email already registered")
+    quotas.enforce(db, p.tenant_id, "users")
     u = m.User(email=email, password_hash=hash_password(body.password))
     db.add(u)
     db.flush()

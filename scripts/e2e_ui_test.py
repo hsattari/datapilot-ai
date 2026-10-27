@@ -168,6 +168,8 @@ with sync_playwright() as p:
     assert stored["currency"] == "EUR", f"settings were not stored: {stored}"  # check the server, not the screen
     page.get_by_role("button", name="Activity").click()
     expect(page.get_by_test_id("usage")).to_contain_text("2 files", timeout=10000)
+    expect(page.get_by_test_id("plan-limits")).to_contain_text("Plan: starter")
+    expect(page.get_by_test_id("plan-limits")).to_contain_text("Files uploaded (30 days)")
     expect(page.get_by_text("alert.triggered").first).to_be_visible(timeout=10000)
     expect(page.get_by_text("settings.updated").first).to_be_visible()
     page.screenshot(path=f"{S}/activity.png")

@@ -11,6 +11,7 @@ os.environ.update(
     LOCAL_STORAGE_PATH=f"{_tmp}/raw",
     ANALYTICS_PATH=f"{_tmp}/analytics",
     JWT_SECRET="test-secret",
+    DEFAULT_PLAN="enterprise",    # unlimited, so general tests are not affected by plan limits; test_quotas.py sets small ones
     AUTO_MODEL_DEFAULT="false",   # existing tests exercise the manual approval path; test_automodel.py turns it on
     AZURE_OPENAI_ENDPOINT="", AZURE_OPENAI_API_KEY="", AZURE_OPENAI_DEPLOYMENT="",
 )

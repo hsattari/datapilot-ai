@@ -95,7 +95,7 @@ Not built: a Dashboards page, follow-up chat, feedback buttons, exports of answe
 | Terraform for the data layer and hosting | **Verified** | Applied by the owner. Missing: private networking, custom domain, WAF |
 | CI | Tested | GitHub Actions: api, web, PostgreSQL + pgvector, dbt. Not built: image scanning, staging smoke tests, separate dev/test/staging/prod environments |
 | Runbook, rollback, incident response | Partial | `docs/operations/runbook.md`; no incident-response document |
-| Tiers, quotas, per-tenant query/AI budgets | Not built | Usage is counted (`/usage`); nothing is limited |
+| Tiers, quotas, per-tenant limits | Tested | Plan per organisation (starter / growth / advanced / enterprise) with limits on uploads, rows loaded, questions per day, people and documents; 429 with a clear message at the limit, warning from 80%, shown in Usage and on Home. The numbers are **placeholders, not validated pricing**; the plan is set by the service owner (no customer endpoint). Not built: AI token and embedding budgets, storage-size and compute-cost tracking, billing |
 | Lineage source -> model -> metric -> dashboard -> answer | Partial | Each answer carries its metric definition, source and freshness; there is no lineage view |
 
 ## 21. Acceptance scenario
@@ -116,7 +116,7 @@ Not built: product analytics for activation, time to first dashboard, retention 
 
 ## Priorities for what is left
 
-1. Cost controls: quotas on uploads, rows and questions per organisation (a stated proposal risk).
+1. ~~Cost controls: quotas~~ (done, see section 17-18; token budgets and billing still open).
 2. Complete the MCP tool set (read-only wrappers over existing endpoints).
 3. XML upload.
 4. Lineage view and a Data Sources list endpoint.

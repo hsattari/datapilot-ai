@@ -38,7 +38,9 @@ function Home() {
   const [tiles, setTiles] = useState<any[]>([]);
   const [hot, setHot] = useState<any[]>([]);
   const [ins, setIns] = useState<any[]>([]);
+  const [qw, setQw] = useState<any[]>([]);
   useEffect(() => {
+    api("/usage").then(r => setQw(r.quota?.warnings || [])).catch(() => {});
     api("/insights").then(r => setIns(r.insights)).catch(() => {});
     api("/dashboard").then(r => setTiles(r.tiles)).catch(() => {});
     api("/alerts").then(r => setHot(r.filter((a: any) => a.last_state === "triggered"))).catch(() => {});
@@ -47,6 +49,10 @@ function Home() {
     <b style={{ color: "#b00020" }}>{hot.length === 1 ? "1 alert is triggered" : `${hot.length} alerts are triggered`}</b>
     {hot.map(a => <div key={a.id}>{a.name}: {a.metric} is {a.last_value} ({a.comparison} {a.threshold})</div>)}
     <small>Details and checks are under Alerts.</small></div>;
+  const quota = qw.length > 0 && <div data-testid="quota-banner" role="status" style={{ ...card, borderColor: "#8a5a00", background: "#fff6e5" }}>
+    <b style={{ color: "#8a5a00" }}>{qw.some(w => w.reached) ? "A plan limit has been reached" : "You are close to a plan limit"}</b>
+    {qw.map(w => <div key={w.item}>{w.message}</div>)}
+    <small>Limits are part of your plan. Ask your administrator to review the plan if you need more.</small></div>;
   const insights = ins.length > 0 && <div style={card} data-testid="insights">
     <h3 style={{ marginTop: 0 }}>Insights</h3>
     {ins.map(i => <div key={i.metric} style={{ marginBottom: 8 }}>
@@ -54,8 +60,8 @@ function Home() {
       {i.anomaly && <div style={{ color: "#8a5a00" }}>Unusual: {i.anomaly.month} is {Math.abs(i.anomaly.z_score)} standard deviations {i.anomaly.z_score > 0 ? "above" : "below"} its recent average.</div>}
     </div>)}
     <small>Computed from your approved metrics. It shows where numbers moved, not why; ask "Why did gross profit change?" under Ask Your Data for the breakdown by product, region and customer.</small></div>;
-  if (!tiles.length) return <>{banner}<div style={card}>No approved metrics with data yet. Upload a file under Data Sources and the model is set up for you when the columns are clear.</div></>;
-  return <>{banner}{insights}{tiles.map(t => (
+  if (!tiles.length) return <>{banner}{quota}<div style={card}>No approved metrics with data yet. Upload a file under Data Sources and the model is set up for you when the columns are clear.</div></>;
+  return <>{banner}{quota}{insights}{tiles.map(t => (
     <div key={t.metric} style={card}>
       <h3 style={{ margin: 0 }}>{t.label}: {Number(t.total).toLocaleString()}</h3>
       {t.caveats.map((c: string) => <small key={c} style={{ color: "#8a5a00" }}>{c}</small>)}
@@ -367,7 +373,13 @@ function Activity() {
   }, []);
   return (<>
     {usage && <div style={card} data-testid="usage"><h3 style={{ marginTop: 0 }}>Usage</h3>
-      {usage.files} files, {usage.datasets} datasets, {usage.rows_loaded} rows loaded, {usage.reports} reports, {usage.alerts} alerts. Questions in the last 30 days: {usage.questions_last_30_days.answered} answered, {usage.questions_last_30_days.refusal} refused.</div>}
+      {usage.files} files, {usage.datasets} datasets, {usage.rows_loaded} rows loaded, {usage.reports} reports, {usage.alerts} alerts. Questions in the last 30 days: {usage.questions_last_30_days.answered} answered, {usage.questions_last_30_days.refusal} refused.
+      {usage.quota && <div data-testid="plan-limits" style={{ marginTop: 8 }}>
+        <p style={{ margin: "0 0 4px" }}>Plan: <b>{usage.quota.plan}</b> (placeholder limits, 0 = unlimited)</p>
+        <table><thead><tr><th>What</th><th>Used</th><th>Limit</th></tr></thead><tbody>
+          {([["uploads", "Files uploaded (30 days)"], ["rows", "Rows loaded (30 days)"], ["questions", "Questions (24 hours)"], ["users", "People"], ["documents", "Knowledge documents"]] as [string, string][]).map(([k, label]) =>
+            <tr key={k}><td>{label}</td><td>{Number(usage.quota.used[k]).toLocaleString()}</td><td>{usage.quota.limits[k] ? Number(usage.quota.limits[k]).toLocaleString() : "unlimited"}</td></tr>)}
+        </tbody></table></div>}</div>}
     <div style={card}><h3 style={{ marginTop: 0 }}>Upload jobs</h3>
       {!jobs.length ? <p>No uploads yet.</p> : <table><thead><tr><th>File</th><th>Status</th><th>Rows</th><th>When</th></tr></thead>
         <tbody>{jobs.map(j => <tr key={j.id}><td>{j.filename}</td><td>{j.status}{j.error_message ? `: ${j.error_message}` : ""}</td><td>{j.rows_loaded}</td><td>{new Date(j.created_at).toLocaleString()}</td></tr>)}</tbody></table>}</div>

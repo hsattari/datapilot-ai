@@ -13,7 +13,7 @@ from .. import models as m
 from ..config import get_settings
 from ..db import get_db
 from ..deps import Principal, get_principal, require_writer
-from ..services import rag
+from ..services import quotas, rag
 from ..services.storage import safe_filename
 
 router = APIRouter(prefix="/api/v1/knowledge", tags=["knowledge"])
@@ -35,6 +35,7 @@ def _audit(db, p, action, **detail):
 
 
 def _index(db: Session, p: Principal, title: str, body: str, filename: str | None):
+    quotas.enforce(db, p.tenant_id, "documents")
     try:
         doc = rag.index_document(db, p.tenant_id, p.user_id, title, body, filename)
     except ValueError as e:

@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     # Scheduled alert checks (minutes between checks of each alert; the worker runs them). 0 = off.
     alert_check_minutes: int = 60
 
+    # Plan given to new organisations (starter | growth | advanced | enterprise). Limits: app/services/quotas.py.
+    default_plan: str = "starter"
+
     # Upload limits
     max_upload_mb: int = 25
     max_sheet_rows: int = 1_000_000

@@ -15,6 +15,7 @@ from .. import models as m
 from ..db import get_db
 from ..deps import Principal, get_principal, require_admin, require_writer
 from ..services import insights
+from ..services import quotas
 from ..services.alerts import evaluate_alert
 from ..services.common import audit, owned, run_plan
 from ..services.planner import make_plan
@@ -199,7 +200,7 @@ def usage(p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
             "reports": count(m.Report), "alerts": count(m.Alert),
             "rows_loaded": db.scalar(select(func.coalesce(func.sum(m.IngestionJob.rows_loaded), 0)).where(
                 m.IngestionJob.tenant_id == t)) or 0,
-            "questions_last_30_days": q30}
+            "questions_last_30_days": q30, "quota": quotas.snapshot(db, t)}
 
 
 # ------------------------------------------------------------- settings

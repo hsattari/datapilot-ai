@@ -20,7 +20,7 @@ from .schemas import ApproveIn, QuestionIn, RegisterIn, SourceIn
 from .security import create_token, hash_password
 from .services.backends import get_backend
 from .services.common import audit, owned, run_plan
-from .services import insights, modelling, quality, semantic
+from .services import insights, modelling, quality, quotas, semantic
 from .services.planner import make_plan
 from .services.query_engine import QueryRejected
 from .services.storage import get_storage, safe_filename
@@ -77,7 +77,8 @@ def healthz():
 def register(body: RegisterIn, db: Session = Depends(get_db)):
     if db.scalar(select(m.User).where(m.User.email == body.email.lower())):
         raise HTTPException(409, "Email already registered")
-    tenant = m.Tenant(name=body.organisation, currency=body.currency, auto_model=get_settings().auto_model_default)
+    tenant = m.Tenant(name=body.organisation, currency=body.currency, auto_model=get_settings().auto_model_default,
+                      plan=get_settings().default_plan)
     user = m.User(email=body.email.lower(), password_hash=hash_password(body.password))
     db.add_all([tenant, user])
     db.flush()
@@ -102,6 +103,8 @@ def create_source(body: SourceIn, p: Principal = Depends(require_writer), db: Se
 async def upload(source_id: str, file: UploadFile = File(...), p: Principal = Depends(require_writer),
                  db: Session = Depends(get_db)):
     owned(db, m.DataSource, source_id, p.tenant_id)
+    quotas.enforce(db, p.tenant_id, "uploads")
+    quotas.enforce(db, p.tenant_id, "rows")
     cfg = get_settings()
     data = await file.read(cfg.max_upload_mb * 1024 * 1024 + 1)
     name = safe_filename(file.filename or "upload")
@@ -242,6 +245,7 @@ def approve_metric(name: str, p: Principal = Depends(require_admin), db: Session
 
 @app.post("/api/v1/analytics/query", dependencies=[ratelimit.by_user("query", "rate_query_per_minute")])
 def analytics_query(body: QuestionIn, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+    quotas.enforce(db, p.tenant_id, "questions")
     approved = {x.name: x.description for x in db.scalars(select(m.Metric).where(
         m.Metric.tenant_id == p.tenant_id, m.Metric.status == "approved"))}
     unapproved = {x.name: x.description for x in db.scalars(select(m.Metric).where(
