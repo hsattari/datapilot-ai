@@ -73,7 +73,7 @@ def build_export(db: Session, tenant_id: str, include_raw: bool = False) -> byte
                                           for u, role in users])  # no password hash, MFA secret or recovery codes
     for name, model in [("data_sources", m.DataSource), ("source_files", m.SourceFile), ("ingestion_jobs", m.IngestionJob),
                         ("datasets", m.Dataset), ("schema_versions", m.SchemaVersion), ("quality_results", m.QualityResult),
-                        ("metrics", m.Metric), ("reports", m.Report), ("alerts", m.Alert), ("summaries", m.Summary),
+                        ("metrics", m.Metric), ("reports", m.Report), ("alerts", m.Alert), ("summaries", m.Summary), ("dashboards", m.Dashboard),
                         ("questions", m.AnalyticalQuery), ("conversations", m.Conversation),
                         ("conversation_messages", m.ConversationMessage), ("audit_events", m.AuditEvent)]:
         files[f"metadata/{name}.json"] = _json(_dump(db, model, tenant_id))

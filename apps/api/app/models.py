@@ -286,3 +286,15 @@ class Summary(Base):
     period_end: Mapped[str] = mapped_column(String(10))                    # ISO date, last day covered
     content: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class Dashboard(Base):
+    """A named set of tiles. A tile is a metric (total + monthly trend) or a saved report; every view is recomputed
+    through the governed engine, so approval, definitions and permissions are re-checked each time it is opened."""
+    __tablename__ = "dashboards"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    title: Mapped[str] = mapped_column(String(200))
+    tiles: Mapped[list] = mapped_column(JSON, default=list)     # [{kind: metric|report, metric?|report_id?}]
+    created_by: Mapped[str] = mapped_column(String(36))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

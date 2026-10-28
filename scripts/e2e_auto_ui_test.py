@@ -82,6 +82,17 @@ with sync_playwright() as p:
     expect(page.get_by_test_id("summary-headline")).to_contain_text("needs attention", timeout=15000)
     expect(page.get_by_test_id("summary")).to_contain_text("file(s) uploaded")
     print("OK a management summary was created with the operations and what needs attention")
+    # dashboards: one click builds an overview of approved metrics, tiles are calculated live
+    page.get_by_role("button", name="Dashboards").click()
+    page.get_by_role("button", name="Create overview from approved metrics").click()
+    view = page.get_by_test_id("dashboard-view")
+    expect(view).to_contain_text("Net Revenue", timeout=15000)
+    expect(view).to_contain_text("350")
+    expect(view).to_contain_text("Gross Profit")
+    print("OK a dashboard was created in one click and its tiles show the approved metrics")
+    page.get_by_role("button", name="Delete dashboard").click()
+    expect(page.get_by_test_id("dashboard-view")).to_have_count(0, timeout=10000)
+    print("OK the dashboard can be deleted")
 
     page.get_by_role("button", name="Settings").click()
     expect(page.get_by_label("Build models and approve standard metrics automatically")).to_be_checked(timeout=10000)

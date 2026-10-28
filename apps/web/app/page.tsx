@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, apiDownload, setToken } from "./api";
 
-type Tab = "home" | "sources" | "metrics" | "ask" | "reports" | "alerts" | "activity" | "settings";
+type Tab = "home" | "dashboards" | "sources" | "metrics" | "ask" | "reports" | "alerts" | "activity" | "settings";
 const card = { background: "#fff", borderRadius: 8, padding: 16, boxShadow: "0 1px 3px #0001", marginBottom: 16 } as const;
 
 function Auth({ onAuthed }: { onAuthed: () => void }) {
@@ -86,6 +86,89 @@ const FACT_FIELDS: [string, string][] = [
   ["order_id", "Order ID"], ["order_date", "Order date"], ["net_sales", "Net sales (revenue)"],
   ["cost_of_goods_sold", "Cost of goods sold"], ["product", "Product"], ["region", "Region"], ["customer", "Customer"],
 ];
+
+function Bars({ rows }: { rows: any[][] }) {
+  const vals = rows.map(r => Number(r[r.length - 1])), max = Math.max(...vals.map(Math.abs), 1);
+  return <div>{rows.slice(0, 12).map((r, i) => <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, margin: "3px 0", fontSize: 13 }}>
+    <span style={{ width: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{String(r[0])}</span>
+    <span style={{ background: "#2563eb", height: 12, width: `${Math.max(2, Math.abs(vals[i]) / max * 150)}px`, display: "inline-block" }} aria-hidden />
+    <span>{Number(vals[i]).toLocaleString()}</span></div>)}</div>;
+}
+
+function TileView({ t }: { t: any }) {
+  const box = { ...card, marginBottom: 0 } as const;
+  if (t.status !== "ok") return <div style={{ ...box, background: "#fff6e5" }} data-tile={t.title}><b>{t.title}</b><p style={{ margin: "6px 0 0", color: "#8a5a00" }}>{t.message}</p></div>;
+  if (t.visualization === "number+trend") return (<div style={box} data-tile={t.title}>
+    <div style={{ color: "#555" }}>{t.title}</div>
+    <div style={{ fontSize: 26, fontWeight: 600 }}>{t.total == null ? "-" : Number(t.total).toLocaleString()}</div>
+    <Spark rows={t.trend} />
+    {t.freshness?.latest_order_date && <small>data up to {t.freshness.latest_order_date}</small>}
+    {t.caveats.map((c: string) => <div key={c}><small style={{ color: "#8a5a00" }}>{c}</small></div>)}</div>);
+  if (t.visualization === "text") return (<div style={box} data-tile={t.title}><b>{t.title}</b><p>{t.headline}</p>{t.caveats.map((c: string) => <div key={c}><small>{c}</small></div>)}</div>);
+  const numeric = t.rows.length > 0 && t.rows[0].length >= 2 && !isNaN(Number(t.rows[0][t.rows[0].length - 1]));
+  return (<div style={box} data-tile={t.title}><b>{t.title}</b>
+    {t.visualization === "number" && t.rows.length === 1 && <div style={{ fontSize: 26, fontWeight: 600 }}>{Number(t.rows[0][0]).toLocaleString()}</div>}
+    {t.visualization === "bar_chart" && numeric && <Bars rows={t.rows} />}
+    {t.visualization === "line_chart" && numeric && <Spark rows={t.rows.map((r: any[]) => [String(r[0]), Number(r[r.length - 1])])} />}
+    {(t.visualization === "table" || !numeric) && t.visualization !== "number" && <table><thead><tr>{t.columns.map((c: string) => <th key={c}>{c}</th>)}</tr></thead>
+      <tbody>{t.rows.slice(0, 20).map((r: any[], i: number) => <tr key={i}>{r.map((v, j) => <td key={j}>{String(v)}</td>)}</tr>)}</tbody></table>}
+    <div><small>{t.metric.label} v{t.metric.version}{t.freshness?.latest_order_date ? ` - data up to ${t.freshness.latest_order_date}` : ""}</small></div></div>);
+}
+
+function Dashboards() {
+  const [list, setList] = useState<any[]>([]);
+  const [view, setView] = useState<any>(null);
+  const [msg, setMsg] = useState("");
+  const [building, setBuilding] = useState(false);
+  const [title, setTitle] = useState("");
+  const [metrics, setMetrics] = useState<any[]>([]);
+  const [reports, setReports] = useState<any[]>([]);
+  const [pick, setPick] = useState<Record<string, boolean>>({});
+  const show = useCallback(async (id: string) => { try { setView(await api(`/dashboards/${id}`)); } catch (e: any) { setMsg(e.message); } }, []);
+  const load = useCallback(async (select?: string) => {
+    const l = await api("/dashboards"); setList(l);
+    const id = select || (l[0] && l[0].id);
+    if (id) await show(id); else setView(null);
+  }, [show]);
+  useEffect(() => { load().catch(e => setMsg(e.message)); }, [load]);
+  const auto = async () => { try { const d = await api("/dashboards/auto", { method: "POST" }); setMsg(""); await load(d.id); } catch (e: any) { setMsg(e.message); } };
+  const startBuild = async () => {
+    setBuilding(true); setTitle(""); setPick({});
+    setMetrics((await api("/metrics")).filter((x: any) => x.status === "approved")); setReports(await api("/reports"));
+  };
+  const create = async () => {
+    const tiles = [...metrics.filter(x => pick[`m:${x.name}`]).map(x => ({ kind: "metric", metric: x.name })),
+                   ...reports.filter(x => pick[`r:${x.id}`]).map(x => ({ kind: "report", report_id: x.id }))];
+    try { const d = await api("/dashboards", { method: "POST", body: JSON.stringify({ title, tiles }) }); setBuilding(false); setMsg(""); await load(d.id); }
+    catch (e: any) { setMsg(e.message); }
+  };
+  const del = async (id: string) => { try { await api(`/dashboards/${id}`, { method: "DELETE" }); setMsg(""); await load(); } catch (e: any) { setMsg(e.message); } };
+  return (<>
+    <div style={card}>
+      <p style={{ marginTop: 0 }}>A dashboard is a set of tiles. Each tile is recalculated from your approved metrics every time you open it.</p>
+      <button onClick={auto}>Create overview from approved metrics</button>{" "}
+      <button onClick={startBuild} style={{ background: "#6b7280" }}>New dashboard</button>
+      {msg && <p role="alert" style={{ marginBottom: 0 }}>{msg}</p>}
+      {list.length > 0 && <p style={{ marginBottom: 0 }}>{list.map(d => <button key={d.id} onClick={() => show(d.id)} disabled={view?.id === d.id} style={{ marginRight: 6 }}>{d.title}</button>)}</p>}
+    </div>
+    {building && <div style={card} data-testid="dashboard-builder">
+      <label>Title<input value={title} onChange={e => setTitle(e.target.value)} /></label>
+      <p style={{ marginBottom: 4 }}><b>Metrics</b></p>
+      {metrics.map(x => <label key={x.name} style={{ display: "block" }}><input type="checkbox" style={{ display: "inline", width: "auto", marginRight: 6 }} checked={!!pick[`m:${x.name}`]} onChange={e => setPick(v => ({ ...v, [`m:${x.name}`]: e.target.checked }))} />{x.label}</label>)}
+      <p style={{ marginBottom: 4 }}><b>Saved reports</b></p>
+      {reports.length === 0 && <small>No saved reports yet. Save one from Ask Your Data.</small>}
+      {reports.map(x => <label key={x.id} style={{ display: "block" }}><input type="checkbox" style={{ display: "inline", width: "auto", marginRight: 6 }} checked={!!pick[`r:${x.id}`]} onChange={e => setPick(v => ({ ...v, [`r:${x.id}`]: e.target.checked }))} />{x.title}</label>)}
+      <p><button onClick={create} disabled={!title.trim() || !Object.values(pick).some(Boolean)}>Create dashboard</button> <button onClick={() => setBuilding(false)} style={{ background: "#6b7280" }}>Cancel</button></p>
+    </div>}
+    {view && <div data-testid="dashboard-view">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}><h3 style={{ margin: 0 }}>{view.title}</h3>
+        <button onClick={() => del(view.id)} style={{ background: "#6b7280" }}>Delete dashboard</button></div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 }}>{view.rendered.map((t: any, i: number) => <TileView key={i} t={t} />)}</div>
+    </div>}
+    {!view && !building && <div style={card}>No dashboards yet. Create an overview to see your approved metrics at a glance.</div>}
+  </>);
+}
+
 
 const STATE_LABEL: Record<string, [string, string]> = {
   ok: ["Up to date", "#1a7f37"], failed: ["Failed", "#b00020"], late: ["Late", "#8a5a00"],
@@ -756,9 +839,9 @@ export default function Page() {
   return (
     <main style={{ maxWidth: 900, margin: "0 auto", padding: 24 }}>
       <nav style={{ marginBottom: 16 }}>
-        {(["home", "sources", "metrics", "ask", "reports", "alerts", "activity", "settings"] as Tab[]).map(t => <button key={t} onClick={() => setTab(t)} disabled={tab === t} style={{ marginRight: 8 }}>{{ home: "Home", sources: "Data Sources", metrics: "Business Metrics", ask: "Ask Your Data", reports: "Reports", alerts: "Alerts", activity: "Activity", settings: "Settings" }[t]}</button>)}
+        {(["home", "dashboards", "sources", "metrics", "ask", "reports", "alerts", "activity", "settings"] as Tab[]).map(t => <button key={t} onClick={() => setTab(t)} disabled={tab === t} style={{ marginRight: 8 }}>{{ home: "Home", dashboards: "Dashboards", sources: "Data Sources", metrics: "Business Metrics", ask: "Ask Your Data", reports: "Reports", alerts: "Alerts", activity: "Activity", settings: "Settings" }[t]}</button>)}
       </nav>
-      {tab === "home" ? <Home /> : tab === "sources" ? <Sources /> : tab === "metrics" ? <Metrics /> : tab === "reports" ? <Reports /> : tab === "alerts" ? <Alerts /> : tab === "activity" ? <Activity /> : tab === "settings" ? <><Settings /><AccountSecurity /><Users /></> : <Ask />}
+      {tab === "home" ? <Home /> : tab === "dashboards" ? <Dashboards /> : tab === "sources" ? <Sources /> : tab === "metrics" ? <Metrics /> : tab === "reports" ? <Reports /> : tab === "alerts" ? <Alerts /> : tab === "activity" ? <Activity /> : tab === "settings" ? <><Settings /><AccountSecurity /><Users /></> : <Ask />}
     </main>
   );
 }
