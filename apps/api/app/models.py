@@ -75,6 +75,11 @@ class DataSource(Base):
     kind: Mapped[str] = mapped_column(String(30), default="file")
     # How often new data should arrive (days). If nothing arrives in that time the source is reported as "late".
     expected_every_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # URL connector: a public https address fetched on demand or every `sync_every_hours`.
+    url: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    sync_every_hours: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_sync_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 

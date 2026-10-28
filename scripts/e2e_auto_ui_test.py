@@ -85,6 +85,12 @@ with sync_playwright() as p:
     expect(page.get_by_test_id("recommendations")).to_be_visible(timeout=15000)
     expect(page.get_by_test_id("recommendations")).to_contain_text("Recommendations")
     print("OK the Recommendations panel is shown on Reports")
+    page.get_by_role("button", name="Data Sources").click()
+    page.get_by_label("Web source name").fill("Metadata probe")
+    page.get_by_label("Web address").fill("https://169.254.169.254/latest/meta-data/x.csv")
+    page.get_by_role("button", name="Connect and fetch").click()
+    expect(page.get_by_test_id("web-msg")).to_contain_text("private or local network", timeout=10000)
+    print("OK an address on a private network is refused in the browser")
     # dashboards: one click builds an overview of approved metrics, tiles are calculated live
     page.get_by_role("button", name="Dashboards").click()
     page.get_by_role("button", name="Create overview from approved metrics").click()

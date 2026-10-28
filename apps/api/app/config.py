@@ -78,6 +78,9 @@ class Settings(BaseSettings):
 
     # Upload limits
     max_upload_mb: int = 25
+    connector_timeout_seconds: float = 20.0
+    connector_allow_http: bool = False     # development only: allows http:// on port 80; hosts are still checked
+    rate_sync_per_minute: int = 6          # per user: manual URL syncs
     max_sheet_rows: int = 1_000_000
 
     # Query safety

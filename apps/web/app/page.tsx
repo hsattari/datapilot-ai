@@ -258,11 +258,54 @@ function Summaries() {
   </div>);
 }
 
+/** Web address connector: fetch a public https file now or on a schedule. */
+function WebConnections({ onChange }: { onChange: () => void }) {
+  const [rows, setRows] = useState<any[]>([]);
+  const [name, setName] = useState(""); const [url, setUrl] = useState(""); const [hours, setHours] = useState("24");
+  const [msg, setMsg] = useState("");
+  const load = useCallback(() => api("/health").then(r => setRows(r.sources.filter((x: any) => x.connected))).catch(() => {}), []);
+  useEffect(() => { load(); }, [load]);
+  const say = (e: any) => setMsg(e.message || String(e));
+  const fetchNow = async (id: string) => {
+    try { const r = await api(`/data-sources/${id}/sync`, { method: "POST" });
+      setMsg(r.status === "unchanged" ? "Fetched: the file has not changed since last time." : "Fetched. It is being processed like an upload."); }
+    catch (e) { say(e); }
+    await load(); onChange();
+  };
+  const connect = async () => {
+    try {
+      const src = await api("/data-sources", { method: "POST", body: JSON.stringify({ name }) });
+      try { await api(`/data-sources/${src.id}/connection`, { method: "PUT", body: JSON.stringify({ url, sync_every_hours: hours ? Number(hours) : null }) }); }
+      catch (e) { await api(`/data-sources/${src.id}/connection`, { method: "DELETE" }).catch(() => {}); throw e; }
+      setName(""); setUrl(""); setMsg("Connected."); await fetchNow(src.id);
+    } catch (e) { say(e); }
+  };
+  const disconnect = async (id: string) => { try { await api(`/data-sources/${id}/connection`, { method: "DELETE" }); setMsg("Disconnected."); await load(); onChange(); } catch (e) { say(e); } };
+  return (<div style={card} data-testid="web-connections">
+    <h3 style={{ marginTop: 0 }}>Fetch from a web address</h3>
+    <small>Public https addresses only (a pre-signed link is fine). Addresses on private networks are refused. Do not put a password in the address.</small>
+    <p style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+      <input placeholder="Name" aria-label="Web source name" value={name} onChange={e => setName(e.target.value)} style={{ width: 160 }} />
+      <input placeholder="https://example.com/sales.csv" aria-label="Web address" value={url} onChange={e => setUrl(e.target.value)} style={{ width: 340 }} />
+      <select aria-label="How often to fetch" value={hours} onChange={e => setHours(e.target.value)}>
+        <option value="">Only when I press Fetch now</option><option value="1">Every hour</option><option value="6">Every 6 hours</option>
+        <option value="24">Every day</option><option value="168">Every week</option></select>
+      <button onClick={connect} disabled={!name.trim() || !url.trim()}>Connect and fetch</button></p>
+    {msg && <p role="status" data-testid="web-msg">{msg}</p>}
+    {rows.length > 0 && <table><thead><tr><th>Source</th><th>State</th><th>Schedule</th><th /></tr></thead><tbody>{rows.map(r => (
+      <tr key={r.id} data-source={r.name}><td>{r.name}</td><td>{r.message}</td><td>{r.sync_every_hours ? `every ${r.sync_every_hours} h` : "manual"}</td>
+        <td><button onClick={() => fetchNow(r.id)}>Fetch now</button> <button onClick={() => disconnect(r.id)} style={{ background: "#6b7280" }}>Disconnect</button></td></tr>))}</tbody></table>}
+  </div>);
+}
+
 function Sources() {
   const [msg, setMsg] = useState("");
   const [note, setNote] = useState("");   // result of the last approve, shown next to the button
   const [mapping, setMapping] = useState<Record<string, string>>({});
   const [results, setResults] = useState<{ name: string; status: string }[]>([]);
+  const [reload, setReload] = useState(0);
+  const [isWriter, setIsWriter] = useState(false);
+  useEffect(() => { api("/auth/me").then(r => setIsWriter(r.role === "admin" || r.role === "analyst")).catch(() => {}); }, []);
   const [datasets, setDatasets] = useState<any[]>([]);
   const [profile, setProfile] = useState<any>(null);
   const [quality, setQuality] = useState<any>(null);
@@ -330,7 +373,8 @@ function Sources() {
     catch (e: any) { setMsg(e.message); setNote(`Not saved: ${e.message}`); }
   };
   return (<>
-    <SourceHealth key={results.map(r => r.status).join("|")} />
+    <SourceHealth key={results.map(r => r.status).join("|") + reload} />
+    {isWriter && <WebConnections onChange={() => { setReload(x => x + 1); refresh().catch(() => {}); }} />}
     <div style={card}>
       <input type="file" multiple accept=".csv,.xlsx,.txt,.json,.jsonl,.xml" aria-label="Choose files to upload"
         onChange={e => { const fs = Array.from(e.target.files || []); e.target.value = ""; if (fs.length) uploadMany(fs); }} /> <span>{msg}</span>

@@ -16,6 +16,7 @@ from .routers.workspace import router as workspace_router
 from .routers.lineage import router as lineage_router
 from .routers.monitoring import router as monitoring_router
 from .routers.dashboards import router as dashboards_router
+from .routers.connectors import router as connectors_router
 from .routers.lifecycle import router as lifecycle_router
 from .routers.conversations import router as conversations_router
 from . import observability
@@ -74,6 +75,7 @@ app.include_router(conversations_router)
 app.include_router(lineage_router)
 app.include_router(monitoring_router)
 app.include_router(dashboards_router)
+app.include_router(connectors_router)
 
 
 @app.get("/healthz")

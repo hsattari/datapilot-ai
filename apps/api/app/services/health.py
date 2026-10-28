@@ -34,7 +34,9 @@ def sources(db: Session, tenant_id: str, now: datetime | None = None) -> list[di
         f, j = latest.get(s.id, (None, None))
         last_at = _aware(f.created_at) if f else None
         state, message = "ok", "Up to date"
-        if f is None:
+        if s.last_sync_error and (f is None or s.last_sync_at is None or _aware(s.last_sync_at) >= _aware(f.created_at)):
+            state, message = "failed", f"The last fetch from the web address failed: {s.last_sync_error}"
+        elif f is None:
             state, message = ("late", "Nothing has been uploaded yet") if s.expected_every_days else ("empty", "No files yet")
         elif j is not None and j.status == "failed":
             state, message = "failed", f"The latest upload ({f.filename}) failed: {j.error_message or 'unknown error'}"
@@ -48,7 +50,8 @@ def sources(db: Session, tenant_id: str, now: datetime | None = None) -> list[di
         rows.append({"id": s.id, "name": s.name, "state": state, "message": message,
                      "expected_every_days": s.expected_every_days,
                      "last_upload_at": last_at.isoformat() if last_at else None,
-                     "last_file": f.filename if f else None})
+                     "last_file": f.filename if f else None,
+                     "connected": bool(s.url), "sync_every_hours": s.sync_every_hours})
     return rows
 
 

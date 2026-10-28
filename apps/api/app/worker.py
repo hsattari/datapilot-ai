@@ -4,7 +4,7 @@ import time
 
 from .db import SessionLocal
 from .config import get_settings
-from .services import health, summaries
+from .services import connectors, health, summaries
 from .services.alerts import run_due_alerts
 from .services.ingestion import run_pending
 from .services.lifecycle import purge_expired
@@ -36,9 +36,10 @@ def main(poll_seconds: float = 2.0) -> None:
                 with SessionLocal() as db:
                     new_issues = health.record_new_issues(db)
                     made = summaries.run_weekly(db)
+                    synced = connectors.run_due(db)
                 last_monitor = time.monotonic()
-                if new_issues or made:
-                    log.info("monitoring: %d new issue(s), %d summary(ies)", new_issues, made)
+                if new_issues or made or synced:
+                    log.info("monitoring: %d new issue(s), %d summary(ies), %d web sync(s)", new_issues, made, synced)
             if time.monotonic() - last_purge > 3600:  # retention: at most hourly
                 with SessionLocal() as db:
                     purged = purge_expired(db)
