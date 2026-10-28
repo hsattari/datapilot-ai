@@ -82,6 +82,9 @@ with sync_playwright() as p:
     expect(page.get_by_test_id("summary-headline")).to_contain_text("needs attention", timeout=15000)
     expect(page.get_by_test_id("summary")).to_contain_text("file(s) uploaded")
     print("OK a management summary was created with the operations and what needs attention")
+    expect(page.get_by_test_id("recommendations")).to_be_visible(timeout=15000)
+    expect(page.get_by_test_id("recommendations")).to_contain_text("Recommendations")
+    print("OK the Recommendations panel is shown on Reports")
     # dashboards: one click builds an overview of approved metrics, tiles are calculated live
     page.get_by_role("button", name="Dashboards").click()
     page.get_by_role("button", name="Create overview from approved metrics").click()

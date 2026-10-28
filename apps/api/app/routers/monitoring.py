@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from .. import models as m
 from ..db import get_db
 from ..deps import Principal, get_principal, require_writer
-from ..services import health, summaries
+from ..services import health, recommendations, summaries
 from ..services.common import audit, owned
 
 router = APIRouter(prefix="/api/v1")
@@ -63,3 +63,8 @@ def generate_summary(p: Principal = Depends(require_writer), db: Session = Depen
     audit(db, p, "summary.generated", summary_id=row.id)
     db.commit()
     return _json(row)
+
+
+@router.get("/recommendations")
+def get_recommendations(p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+    return recommendations.build(db, p)

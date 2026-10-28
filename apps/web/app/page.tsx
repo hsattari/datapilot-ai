@@ -206,6 +206,28 @@ function SourceHealth() {
 }
 
 /** Management summary: generated weekly by the worker and on request. */
+function Recommendations() {
+  const [data, setData] = useState<any>(null);
+  const [err, setErr] = useState("");
+  useEffect(() => { api("/recommendations").then(setData).catch(e => setErr(e.message)); }, []);
+  if (err) return <div style={card} role="alert">{err}</div>;
+  if (!data) return null;
+  const colour: Record<string, string> = { high: "#166534", medium: "#8a5a00", low: "#991b1b" };
+  return (<div style={card} data-testid="recommendations">
+    <h3 style={{ marginTop: 0 }}>Recommendations</h3>
+    <small>{data.note}</small>
+    {data.recommendations.length === 0 && <p>Nothing to recommend yet. This needs approved metrics and at least two complete months of data.</p>}
+    {data.recommendations.map((r: any) => (<div key={r.id} style={{ borderTop: "1px solid #e5e7eb", marginTop: 12, paddingTop: 8 }} data-rec={r.id}>
+      <b>{r.title}</b> <small style={{ color: colour[r.confidence.level] }}>confidence: {r.confidence.level}</small>
+      <ul style={{ margin: "6px 0" }}>{r.evidence.map((e: string) => <li key={e}>{e}</li>)}</ul>
+      <div><small><b>What to check:</b></small><ul style={{ margin: "2px 0" }}>{r.next_steps.map((e: string) => <li key={e}>{e}</li>)}</ul></div>
+      <details><summary>Why this confidence, and caveats</summary>
+        <ul>{r.confidence.reasons.map((e: string) => <li key={e}>{e}</li>)}</ul>
+        <ul>{r.caveats.map((e: string) => <li key={e}>{e}</li>)}</ul></details>
+    </div>))}
+  </div>);
+}
+
 function Summaries() {
   const [list, setList] = useState<any[]>([]);
   const [open, setOpen] = useState<any>(null);
@@ -571,6 +593,7 @@ function Reports() {
   const run = async (id: string) => setResult(await api(`/reports/${id}/run`).catch(e => ({ outcome: "error", message: e.message })));
   const del = async (id: string) => { try { await api(`/reports/${id}`, { method: "DELETE" }); setResult(null); await refresh(); } catch (e: any) { setMsg(e.message); } };
   return (<>
+    <Recommendations />
     <Summaries />
     <div style={card}>
       <p style={{ marginTop: 0 }}>Reports are saved questions. Each run uses the current approved metric definitions and data.</p>
