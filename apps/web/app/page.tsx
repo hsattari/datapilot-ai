@@ -39,7 +39,9 @@ function Home() {
   const [hot, setHot] = useState<any[]>([]);
   const [ins, setIns] = useState<any[]>([]);
   const [qw, setQw] = useState<any[]>([]);
+  const [issues, setIssues] = useState<any[]>([]);
   useEffect(() => {
+    api("/health").then(r => setIssues(r.issues)).catch(() => {});
     api("/usage").then(r => setQw(r.quota?.warnings || [])).catch(() => {});
     api("/insights").then(r => setIns(r.insights)).catch(() => {});
     api("/dashboard").then(r => setTiles(r.tiles)).catch(() => {});
@@ -49,6 +51,10 @@ function Home() {
     <b style={{ color: "#b00020" }}>{hot.length === 1 ? "1 alert is triggered" : `${hot.length} alerts are triggered`}</b>
     {hot.map(a => <div key={a.id}>{a.name}: {a.metric} is {a.last_value} ({a.comparison} {a.threshold})</div>)}
     <small>Details and checks are under Alerts.</small></div>;
+  const attention = issues.length > 0 && <div data-testid="health-banner" role="status" style={{ ...card, borderColor: issues.some(i => i.severity === "high") ? "#b00020" : "#8a5a00", background: "#fff6e5" }}>
+    <b>{issues.length === 1 ? "1 item needs attention" : `${issues.length} items need attention`}</b>
+    {issues.slice(0, 5).map(i => <div key={i.key}>{i.message}</div>)}
+    <small>Source health is under Data Sources.</small></div>;
   const quota = qw.length > 0 && <div data-testid="quota-banner" role="status" style={{ ...card, borderColor: "#8a5a00", background: "#fff6e5" }}>
     <b style={{ color: "#8a5a00" }}>{qw.some(w => w.reached) ? "A plan limit has been reached" : "You are close to a plan limit"}</b>
     {qw.map(w => <div key={w.item}>{w.message}</div>)}
@@ -60,8 +66,8 @@ function Home() {
       {i.anomaly && <div style={{ color: "#8a5a00" }}>Unusual: {i.anomaly.month} is {Math.abs(i.anomaly.z_score)} standard deviations {i.anomaly.z_score > 0 ? "above" : "below"} its recent average.</div>}
     </div>)}
     <small>Computed from your approved metrics. It shows where numbers moved, not why; ask "Why did gross profit change?" under Ask Your Data for the breakdown by product, region and customer.</small></div>;
-  if (!tiles.length) return <>{banner}{quota}<div style={card}>No approved metrics with data yet. Upload a file under Data Sources and the model is set up for you when the columns are clear.</div></>;
-  return <>{banner}{quota}{insights}{tiles.map(t => (
+  if (!tiles.length) return <>{banner}{attention}{quota}<div style={card}>No approved metrics with data yet. Upload a file under Data Sources and the model is set up for you when the columns are clear.</div></>;
+  return <>{banner}{attention}{quota}{insights}{tiles.map(t => (
     <div key={t.metric} style={card}>
       <h3 style={{ margin: 0 }}>{t.label}: {Number(t.total).toLocaleString()}</h3>
       {t.caveats.map((c: string) => <small key={c} style={{ color: "#8a5a00" }}>{c}</small>)}
@@ -80,6 +86,72 @@ const FACT_FIELDS: [string, string][] = [
   ["order_id", "Order ID"], ["order_date", "Order date"], ["net_sales", "Net sales (revenue)"],
   ["cost_of_goods_sold", "Cost of goods sold"], ["product", "Product"], ["region", "Region"], ["customer", "Customer"],
 ];
+
+const STATE_LABEL: Record<string, [string, string]> = {
+  ok: ["Up to date", "#1a7f37"], failed: ["Failed", "#b00020"], late: ["Late", "#8a5a00"],
+  processing: ["Processing", "#2563eb"], empty: ["No files", "#6b7280"],
+};
+
+/** Data-source health: latest upload state, and how often a new file is expected (so a missing file is noticed). */
+function SourceHealth() {
+  const [rows, setRows] = useState<any[]>([]);
+  const [days, setDays] = useState<Record<string, string>>({});
+  const [msg, setMsg] = useState("");
+  const load = useCallback(() => api("/health").then(r => {
+    setRows(r.sources); setDays(Object.fromEntries(r.sources.map((x: any) => [x.id, x.expected_every_days ? String(x.expected_every_days) : ""])));
+  }).catch(() => {}), []);
+  useEffect(() => { load(); }, [load]);
+  const save = async (id: string) => {
+    try { await api(`/data-sources/${id}`, { method: "PATCH", body: JSON.stringify({ expected_every_days: days[id] ? Number(days[id]) : 0 }) }); setMsg("Saved."); await load(); }
+    catch (e: any) { setMsg(e.message); }
+  };
+  if (!rows.length) return null;
+  return (<div style={card} data-testid="source-health">
+    <h3 style={{ marginTop: 0 }}>Source health</h3>
+    <table><thead><tr><th>Source</th><th>State</th><th>Last upload</th><th>Expect a new file every</th></tr></thead>
+      <tbody>{rows.map(r => { const [label, colour] = STATE_LABEL[r.state] || [r.state, "#444"]; return (
+        <tr key={r.id} data-source={r.name}>
+          <td>{r.name}</td>
+          <td><b style={{ color: colour }}>{label}</b><br /><small>{r.message}</small></td>
+          <td>{r.last_upload_at ? new Date(r.last_upload_at).toLocaleString() : "-"}</td>
+          <td><input type="number" min={0} max={365} placeholder="days" aria-label={`Days between files for ${r.name}`} style={{ width: 70, display: "inline" }}
+            value={days[r.id] ?? ""} onChange={e => setDays(d => ({ ...d, [r.id]: e.target.value }))} /> days <button onClick={() => save(r.id)}>Save</button></td>
+        </tr>); })}</tbody></table>
+    {msg && <small role="status">{msg}</small>}
+    <small style={{ display: "block", marginTop: 6 }}>If nothing arrives within that time the source is shown as Late. Leave blank to switch the check off.</small>
+  </div>);
+}
+
+/** Management summary: generated weekly by the worker and on request. */
+function Summaries() {
+  const [list, setList] = useState<any[]>([]);
+  const [open, setOpen] = useState<any>(null);
+  const [msg, setMsg] = useState("");
+  const load = useCallback(async () => {
+    const l = await api("/summaries"); setList(l);
+    if (l.length) setOpen(await api(`/summaries/${l[0].id}`));
+  }, []);
+  useEffect(() => { load().catch(() => {}); }, [load]);
+  const gen = async () => { try { setMsg("Generating…"); const r = await api("/summaries/generate", { method: "POST" }); setOpen(r); setMsg(""); setList(await api("/summaries")); } catch (e: any) { setMsg(e.message); } };
+  const c = open?.content;
+  return (<div style={card} data-testid="summary">
+    <h3 style={{ marginTop: 0 }}>Management summary</h3>
+    <p style={{ marginTop: 0 }}>A short summary is created every week. You can also create one now for the last 7 days. <button onClick={gen}>Create summary now</button> {msg && <span role="status">{msg}</span>}</p>
+    {!c ? <p>No summary yet.</p> : <>
+      <p style={{ fontWeight: 600 }} data-testid="summary-headline">{c.headline}</p>
+      <small>{c.period.start} to {c.period.end} ({open.kind === "weekly" ? "weekly" : "on request"})</small>
+      {c.metrics.length > 0 && <ul>{c.metrics.map((x: any) => <li key={x.label}>{x.headline}</li>)}</ul>}
+      <p style={{ marginBottom: 4 }}><b>This period</b></p>
+      <ul style={{ marginTop: 0 }}>
+        <li>{c.operations.files_uploaded} file(s) uploaded, {c.operations.rows_loaded} rows loaded{c.operations.uploads_failed ? `, ${c.operations.uploads_failed} failed` : ""}</li>
+        <li>{c.operations.questions_answered} question(s) answered, {c.operations.questions_refused} refused</li>
+        <li>{c.operations.alerts_triggered} alert(s) triggered, {c.operations.alerts_recovered} recovered</li>
+      </ul>
+      {c.attention.length > 0 && <><p style={{ marginBottom: 4 }}><b>Needs attention</b></p><ul style={{ marginTop: 0 }}>{c.attention.map((a: any) => <li key={a.key}>{a.message}</li>)}</ul></>}
+      {c.caveats.map((x: string) => <div key={x}><small style={{ color: "#8a5a00" }}>{x}</small></div>)}
+      <small style={{ display: "block", marginTop: 6 }}>{c.note}</small></>}
+  </div>);
+}
 
 function Sources() {
   const [msg, setMsg] = useState("");
@@ -153,6 +225,7 @@ function Sources() {
     catch (e: any) { setMsg(e.message); setNote(`Not saved: ${e.message}`); }
   };
   return (<>
+    <SourceHealth key={results.map(r => r.status).join("|")} />
     <div style={card}>
       <input type="file" multiple accept=".csv,.xlsx,.txt,.json,.jsonl,.xml" aria-label="Choose files to upload"
         onChange={e => { const fs = Array.from(e.target.files || []); e.target.value = ""; if (fs.length) uploadMany(fs); }} /> <span>{msg}</span>
@@ -415,6 +488,7 @@ function Reports() {
   const run = async (id: string) => setResult(await api(`/reports/${id}/run`).catch(e => ({ outcome: "error", message: e.message })));
   const del = async (id: string) => { try { await api(`/reports/${id}`, { method: "DELETE" }); setResult(null); await refresh(); } catch (e: any) { setMsg(e.message); } };
   return (<>
+    <Summaries />
     <div style={card}>
       <p style={{ marginTop: 0 }}>Reports are saved questions. Each run uses the current approved metric definitions and data.</p>
       {msg && <p role="alert">{msg}</p>}

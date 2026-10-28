@@ -73,6 +73,8 @@ class DataSource(Base):
     tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
     name: Mapped[str] = mapped_column(String(200))
     kind: Mapped[str] = mapped_column(String(30), default="file")
+    # How often new data should arrive (days). If nothing arrives in that time the source is reported as "late".
+    expected_every_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
@@ -270,4 +272,17 @@ class ConversationMessage(Base):
     answer: Mapped[dict] = mapped_column(JSON, default=dict)         # what was shown; rows capped (the export re-runs the plan)
     feedback: Mapped[str | None] = mapped_column(String(10), nullable=True)   # up | down
     feedback_comment: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class Summary(Base):
+    """A management summary generated from approved metrics and operations (weekly by the worker, or on request)."""
+    __tablename__ = "summaries"
+    __table_args__ = (UniqueConstraint("tenant_id", "kind", "period_start"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(20), default="weekly")        # weekly (scheduled) | on_demand
+    period_start: Mapped[str] = mapped_column(String(10))                  # ISO date, first day covered
+    period_end: Mapped[str] = mapped_column(String(10))                    # ISO date, last day covered
+    content: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

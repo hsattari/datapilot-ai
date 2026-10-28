@@ -21,7 +21,7 @@ Status words, used strictly:
 | Conversational analytics | Tested | Structured plan, governed metrics, safe SQL, provenance, caveats, refusals: **Tested**; planner **Verified** live 29/29. **Conversations** with follow-ups ("and by region?", "same for gross profit", "what about the last 3 months"): read by rules as a change to the previous plan, shown back as "Understood as: ...", same validation and refusals as any question; private to their owner. Answer **feedback** (helpful / not helpful with a reason; administrators see it on Activity). **CSV export** of an answer (administrators and analysts only, re-runs the plan so approval is re-checked, formula-safe, rate-limited, logged). Chats are in the organisation export and erased with the person, the organisation and by retention. Follow-ups never go to the Azure OpenAI planner (rules only, by design); the 29 live planner cases are single questions and do not exercise them, so follow-up quality is covered by the API and browser tests only |
 | Business recommendations | Partial | Evidence-based driver analysis and anomaly flags with caveats. Not built: written recommendations with baselines, confidence and next steps |
 | RAG knowledge assistant | Tested | Hybrid keyword + vector retrieval, cited answers, tenant isolation: tested on PostgreSQL + pgvector (**Verified** vector queries on Azure PostgreSQL). Azure AI Search backend not built (pgvector is allowed by the proposal) |
-| Monitoring and alerts | Partial | Threshold alerts checked by the worker, one log entry per state change, Home banner: **Tested**. Not built: e-mail/Teams delivery (needs a sender account), alerts for missing files, refresh failures and schema changes as their own rules, weekly summary |
+| Monitoring and alerts | Partial | Threshold alerts checked by the worker, one log entry per state change, Home banner: **Tested**. **Source health** (failed refresh while it is the latest attempt, changed schema with what changed, file missing when an expected cadence is set) on Data Sources and Home; the worker records each new issue once in the Activity log: **Tested** (API + browser). **Management summary**: created weekly by the worker (last Monday-Sunday) and on request; month-on-month movements from approved metrics, that week's uploads/questions/alerts, what needs attention, caveats; no model writes any number: **Tested**. Not built: e-mail/Teams delivery of alerts and summaries (needs a sender account); the summary is read in the app (Reports) |
 
 ## 4-7. Architecture, ingestion, medallion, dbt
 
@@ -121,6 +121,6 @@ Not built: product analytics for activation, time to first dashboard, retention 
 2. ~~Complete the MCP tool set~~ (done).
 3. ~~XML upload~~ (done).
 4. ~~Lineage view~~ (done).
-5. Weekly management summary and a Dashboards page.
+5. ~~Weekly management summary~~ (done, in-app) and a Dashboards page.
 6. ~~Conversations (follow-up context), answer feedback and answer export~~ (done; LLM-assisted follow-ups would need a live evaluation run).
 7. Things that need the owner: Fabric capacity, a real identity provider, a mail sender, legal review (DPIA), private networking.

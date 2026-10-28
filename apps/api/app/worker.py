@@ -4,6 +4,7 @@ import time
 
 from .db import SessionLocal
 from .config import get_settings
+from .services import health, summaries
 from .services.alerts import run_due_alerts
 from .services.ingestion import run_pending
 from .services.lifecycle import purge_expired
@@ -16,6 +17,7 @@ def main(poll_seconds: float = 2.0) -> None:
     delay = poll_seconds
     last_purge = 0.0
     last_alerts = 0.0
+    last_monitor = 0.0
     while True:
         try:
             with SessionLocal() as db:
@@ -30,6 +32,13 @@ def main(poll_seconds: float = 2.0) -> None:
                 last_alerts = time.monotonic()
                 if checked:
                     log.info("checked %d alert(s)", checked)
+            if time.monotonic() - last_monitor > 900:  # refresh health and weekly summaries every 15 minutes
+                with SessionLocal() as db:
+                    new_issues = health.record_new_issues(db)
+                    made = summaries.run_weekly(db)
+                last_monitor = time.monotonic()
+                if new_issues or made:
+                    log.info("monitoring: %d new issue(s), %d summary(ies)", new_issues, made)
             if time.monotonic() - last_purge > 3600:  # retention: at most hourly
                 with SessionLocal() as db:
                     purged = purge_expired(db)

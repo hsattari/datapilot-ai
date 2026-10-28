@@ -63,6 +63,26 @@ with sync_playwright() as p:
     expect(page.get_by_test_id("auto-review")).to_be_visible()
     print("OK an ambiguous 'amount' column is not guessed: it asks the person")
 
+    # monitoring: source health, a failed refresh shows on Home, a summary can be created
+    row = page.get_by_test_id("source-health").locator("tr[data-source='orders_reference.csv']")
+    expect(row).to_contain_text("Up to date", timeout=10000)
+    row.get_by_label("Days between files for orders_reference.csv").fill("1")
+    row.get_by_role("button", name="Save").click()
+    expect(page.get_by_test_id("source-health").get_by_role("status")).to_have_text("Saved.", timeout=10000)
+    bad = pathlib.Path(tempfile.mkdtemp()) / "broken.csv"
+    bad.write_text("a,A\n1,2\n")
+    page.locator("input[type=file]").set_input_files(str(bad))
+    expect(page.get_by_test_id("upload-results")).to_contain_text("broken.csv - failed", timeout=30000)
+    expect(page.get_by_test_id("source-health").locator("tr[data-source='broken.csv']")).to_contain_text("Failed", timeout=10000)
+    page.get_by_role("button", name="Home").click()
+    expect(page.get_by_test_id("health-banner")).to_contain_text("broken.csv", timeout=10000)
+    print("OK source health shows the failed upload and Home says what needs attention")
+    page.get_by_role("button", name="Reports").click()
+    page.get_by_role("button", name="Create summary now").click()
+    expect(page.get_by_test_id("summary-headline")).to_contain_text("needs attention", timeout=15000)
+    expect(page.get_by_test_id("summary")).to_contain_text("file(s) uploaded")
+    print("OK a management summary was created with the operations and what needs attention")
+
     page.get_by_role("button", name="Settings").click()
     expect(page.get_by_label("Build models and approve standard metrics automatically")).to_be_checked(timeout=10000)
     print("OK the setting is on by default and visible in Settings")

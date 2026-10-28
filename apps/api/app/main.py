@@ -14,6 +14,7 @@ from .routers.knowledge import router as knowledge_router
 from .routers.auth import router as auth_router
 from .routers.workspace import router as workspace_router
 from .routers.lineage import router as lineage_router
+from .routers.monitoring import router as monitoring_router
 from .routers.lifecycle import router as lifecycle_router
 from .routers.conversations import router as conversations_router
 from . import observability
@@ -70,6 +71,7 @@ app.include_router(workspace_router)
 app.include_router(lifecycle_router)
 app.include_router(conversations_router)
 app.include_router(lineage_router)
+app.include_router(monitoring_router)
 
 
 @app.get("/healthz")
@@ -166,7 +168,8 @@ def list_data_sources(p: Principal = Depends(get_principal), db: Session = Depen
                                                        m.IngestionJob.file_id == files[0].id))
             last = {"filename": files[0].filename, "uploaded_at": files[0].created_at.isoformat(),
                     "status": j.status if j else None}
-        out.append({"id": s_.id, "name": s_.name, "kind": s_.kind, "files": len(files), "last_file": last})
+        out.append({"id": s_.id, "name": s_.name, "kind": s_.kind, "files": len(files), "last_file": last,
+                    "expected_every_days": s_.expected_every_days})
     return out
 
 
