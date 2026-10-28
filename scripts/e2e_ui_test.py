@@ -90,9 +90,10 @@ with sync_playwright() as p:
     page.get_by_role("button", name="Ask Your Data").click()
     page.get_by_placeholder("e.g. Why has gross profit").fill("What is our gross profit?")
     page.get_by_role("button", name="Ask", exact=True).click()
-    expect(page.get_by_text("How this was calculated")).to_be_visible(timeout=10000)
-    assert page.locator("table td").first.inner_text().startswith("140"), page.locator("table").inner_text()
-    page.get_by_text("How this was calculated").click()
+    last = page.get_by_test_id("chat-message").last          # the chat keeps every answer; look at the newest
+    expect(last.get_by_text("How this was calculated")).to_be_visible(timeout=10000)
+    assert last.locator("table td").first.inner_text().startswith("140"), last.locator("table").inner_text()
+    last.get_by_text("How this was calculated").click()
     expect(page.locator("code", has_text="net_sales - cost_of_goods_sold")).to_be_visible()
     page.screenshot(path=f"{S}/ask.png")
     print("OK ask -> 140 with definition shown")
@@ -118,8 +119,8 @@ with sync_playwright() as p:
     page.get_by_role("button", name="Ask Your Data").click()
     page.get_by_placeholder("e.g. Why has gross profit").fill("net revenue by category")
     page.get_by_role("button", name="Ask", exact=True).click()
-    expect(page.get_by_text("How this was calculated")).to_be_visible(timeout=10000)
-    cells = page.locator("table td").all_inner_texts()
+    expect(page.get_by_test_id("chat-message").last.get_by_text("How this was calculated")).to_be_visible(timeout=10000)
+    cells = page.get_by_test_id("chat-message").last.locator("table td").all_inner_texts()
     assert cells[:4] == ["Accessories", "200", "Hardware", "150"], cells
     print("OK ask by category -> Accessories 200, Hardware 150")
 
@@ -130,8 +131,9 @@ with sync_playwright() as p:
 
     page.get_by_placeholder("e.g. Why has gross profit").fill("What is our gross profit?")
     page.get_by_role("button", name="Ask", exact=True).click()
-    expect(page.get_by_text("How this was calculated")).to_be_visible(timeout=10000)
-    page.get_by_role("button", name="Save as report").click()
+    last = page.get_by_test_id("chat-message").last
+    expect(last.get_by_text("How this was calculated")).to_be_visible(timeout=10000)
+    last.get_by_role("button", name="Save as report").click()
     expect(page.get_by_text("Saved under Reports.")).to_be_visible(timeout=10000)
     page.get_by_role("button", name="Reports").click()
     expect(page.get_by_text("What is our gross profit?").first).to_be_visible(timeout=10000)

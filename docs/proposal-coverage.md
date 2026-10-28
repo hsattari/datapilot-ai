@@ -18,7 +18,7 @@ Status words, used strictly:
 | Source management | Partial | CSV, XLSX, TXT, JSON, JSONL: **Tested** locally. In Azure the web app opens and works (owner), the storage layer was checked directly, but an upload through ClamAV and the worker has **not yet been confirmed** since the Azure Files fix. XML upload: **Tested** (hardened parser, see below). Not built: API connectors, database connectors, `POST /data-sources/{id}/sync`. Schema history: **Tested** |
 | Automated data engineering | Partial | Schema inference, profiling, mapping suggestions with confidence, quarantine, reconciled counts, retries with backoff, quality checks: **Tested**. Sales files accumulate with upsert by order ID (latest file wins, reported): **Tested**. Not built: lineage view, watermarks / API cursors / CDC, snapshots |
 | Business intelligence | Partial | Home dashboard tiles, monthly trend, automatic insights and anomaly flag, "why did it change" driver analysis, saved reports: **Tested**. Not built: industry templates other than retail, a separate Dashboards page with saved dashboards, scheduled report delivery, weekly management summary |
-| Conversational analytics | Partial | Structured plan, governed metrics, safe SQL, provenance, caveats, refusals: **Tested**; planner **Verified** live 29/29. Not built: follow-up context (no conversation history), answer feedback, permission-controlled export of an answer |
+| Conversational analytics | Tested | Structured plan, governed metrics, safe SQL, provenance, caveats, refusals: **Tested**; planner **Verified** live 29/29. **Conversations** with follow-ups ("and by region?", "same for gross profit", "what about the last 3 months"): read by rules as a change to the previous plan, shown back as "Understood as: ...", same validation and refusals as any question; private to their owner. Answer **feedback** (helpful / not helpful with a reason; administrators see it on Activity). **CSV export** of an answer (administrators and analysts only, re-runs the plan so approval is re-checked, formula-safe, rate-limited, logged). Chats are in the organisation export and erased with the person, the organisation and by retention. Follow-ups never go to the Azure OpenAI planner (rules only, by design); the 29 live planner cases are single questions and do not exercise them, so follow-up quality is covered by the API and browser tests only |
 | Business recommendations | Partial | Evidence-based driver analysis and anomaly flags with caveats. Not built: written recommendations with baselines, confidence and next steps |
 | RAG knowledge assistant | Tested | Hybrid keyword + vector retrieval, cited answers, tenant isolation: tested on PostgreSQL + pgvector (**Verified** vector queries on Azure PostgreSQL). Azure AI Search backend not built (pgvector is allowed by the proposal) |
 | Monitoring and alerts | Partial | Threshold alerts checked by the worker, one log entry per state change, Home banner: **Tested**. Not built: e-mail/Teams delivery (needs a sender account), alerts for missing files, refresh failures and schema changes as their own rules, weekly summary |
@@ -62,15 +62,15 @@ Status words, used strictly:
 
 Present: tenants, users, memberships, identities, data_sources, source_files, ingestion_jobs, schema_versions, datasets, quality results, metrics, reports, alerts, analytical_queries, audit_events, documents, chunks, deletion log.
 
-Not built: `workspaces`, `data_models`, `model_dependencies`, `data_quality_rules` (rules are fixed in code), `metric_dimensions`, `dashboards`, `conversations`, `conversation_messages`, `ai_evaluations`.
+Not built: `workspaces`, `data_models`, `model_dependencies`, `data_quality_rules` (rules are fixed in code), `metric_dimensions`, `dashboards`, `ai_evaluations`. Added: `conversations`, `conversation_messages` (with feedback).
 
-API gaps against the illustrative list: `POST /data-sources/{id}/sync`, `/conversations/{id}/messages`. `GET /data-sources` and `POST /analytics/preview` now exist.
+API gaps against the illustrative list: `POST /data-sources/{id}/sync`. `POST /conversations/{id}/messages`, `POST /messages/{id}/feedback`, `GET /messages/{id}/export.csv`, `GET /feedback/summary` now exist. `GET /data-sources` and `POST /analytics/preview` now exist.
 
 ## 15. Frontend
 
 Present: Home, Data Sources (with datasets, quality panel, joins, schema versions), Business Metrics, Ask Your Data, Reports, Alerts, Activity (with jobs and usage), Settings (with people and two-step sign-in), browser-tested.
 
-Not built: a Dashboards page, follow-up chat, feedback buttons, exports of answers, invitations by e-mail, Microsoft sign-in button.
+Ask Your Data is now a chat (follow-ups, history, feedback, CSV download). Not built: a Dashboards page, invitations by e-mail, Microsoft sign-in button.
 
 ## 16. Security and UK compliance
 
@@ -97,7 +97,7 @@ Not built: a Dashboards page, follow-up chat, feedback buttons, exports of answe
 | CI | Tested | GitHub Actions: api, web, PostgreSQL + pgvector, dbt. Not built: image scanning, staging smoke tests, separate dev/test/staging/prod environments |
 | Runbook, rollback, incident response | Partial | `docs/operations/runbook.md`; no incident-response document |
 | Tiers, quotas, per-tenant limits | Tested | Plan per organisation (starter / growth / advanced / enterprise) with limits on uploads, rows loaded, questions per day, people and documents; 429 with a clear message at the limit, warning from 80%, shown in Usage and on Home. The numbers are **placeholders, not validated pricing**; the plan is set by the service owner (no customer endpoint). Not built: AI token and embedding budgets, storage-size and compute-cost tracking, billing |
-| Lineage source -> model -> metric -> dashboard -> answer | Partial | Each answer carries its metric definition, source and freshness; there is no lineage view |
+| Lineage source -> model -> metric -> report/alert -> answer | Tested | `GET /lineage` (graph) and `GET /lineage/metrics/{name}` (column-by-column trace to the uploaded file with its checksum, the models built, definition and version, reports/alerts/answers that use it); shown under Business Metrics > Show lineage. Unmapped inputs are reported, never hidden. Not built: lineage for dashboards (there are none yet) and for dbt model dependencies |
 
 ## 21. Acceptance scenario
 
@@ -120,7 +120,7 @@ Not built: product analytics for activation, time to first dashboard, retention 
 1. ~~Cost controls: quotas~~ (done, see section 17-18; token budgets and billing still open).
 2. ~~Complete the MCP tool set~~ (done).
 3. ~~XML upload~~ (done).
-4. Lineage view.
+4. ~~Lineage view~~ (done).
 5. Weekly management summary and a Dashboards page.
-6. Conversations (follow-up context), answer feedback and answer export.
+6. ~~Conversations (follow-up context), answer feedback and answer export~~ (done; LLM-assisted follow-ups would need a live evaluation run).
 7. Things that need the owner: Fabric capacity, a real identity provider, a mail sender, legal review (DPIA), private networking.

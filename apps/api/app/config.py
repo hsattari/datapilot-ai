@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     rate_query_per_minute: int = 30      # per user: questions
     rate_upload_per_minute: int = 10     # per user: file uploads
     rate_export_per_minute: int = 3      # per user: full data exports
+    rate_answer_export_per_minute: int = 10   # per user: CSV export of one answer
     trust_proxy_headers: bool = False    # honour X-Forwarded-For only behind a proxy you control
     jwt_algorithm: str = "HS256"
     jwt_ttl_minutes: int = 30

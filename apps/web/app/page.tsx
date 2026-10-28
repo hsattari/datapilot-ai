@@ -215,9 +215,41 @@ function Sources() {
   </>);
 }
 
+function LineagePanel({ name }: { name: string }) {
+  const [t, setT] = useState<any>(null);
+  const [err, setErr] = useState("");
+  useEffect(() => { setT(null); setErr(""); api(`/lineage/metrics/${name}`).then(setT).catch(e => setErr(e.message)); }, [name]);
+  if (err) return <p role="alert">{err}</p>;
+  if (!t) return <p>Loading…</p>;
+  const when = (iso: string) => new Date(iso).toLocaleString();
+  return (<div data-testid="lineage" style={{ background: "#f6f8fa", padding: 12, borderRadius: 6 }}>
+    <p style={{ margin: "0 0 6px" }}><b>1. Source files</b> - which uploaded column feeds each field</p>
+    <ul style={{ margin: "0 0 10px", paddingLeft: 18 }}>
+      {t.columns.map((c: any) => <li key={c.field}>
+        <code>{c.field}</code> {c.mapped
+          ? <>&larr; column <code>{c.source_column}</code> of <b>{c.file?.filename}</b> (dataset {c.dataset.name}, uploaded {when(c.file.uploaded_at)}, checksum {c.file.sha256.slice(0, 12)}&hellip;)</>
+          : <b style={{ color: "#b00020" }}>not mapped to any uploaded column</b>}</li>)}
+    </ul>
+    <p style={{ margin: "0 0 6px" }}><b>2. Models</b> - what the files were turned into</p>
+    <ul style={{ margin: "0 0 10px", paddingLeft: 18 }}>
+      {t.models.map((x: any) => <li key={x.role}>{x.label}: {x.built ? `built${x.rows != null ? `, ${x.rows} rows` : ""} from ${x.datasets.map((d: any) => d.file?.filename || d.name).join(", ")}` : "not built yet"}</li>)}
+    </ul>
+    <p style={{ margin: "0 0 6px" }}><b>3. Definition</b></p>
+    <p style={{ margin: "0 0 10px" }}><code>{t.metric.aggregation}({t.metric.expression})</code>, version {t.metric.version}, {t.metric.status === "approved" ? "approved" : "needs approval"}.</p>
+    <p style={{ margin: "0 0 6px" }}><b>4. Used by</b></p>
+    <ul style={{ margin: 0, paddingLeft: 18 }}>
+      <li>Reports: {t.used_by.reports.length ? t.used_by.reports.map((r: any) => r.title).join(", ") : "none"}</li>
+      <li>Alerts: {t.used_by.alerts.length ? t.used_by.alerts.map((a: any) => a.name).join(", ") : "none"}</li>
+      <li>Answers in the last 30 days: {t.used_by.answers_last_30_days}</li>
+    </ul>
+    {t.note && <p style={{ margin: "8px 0 0", color: "#b00020" }}>{t.note}</p>}
+  </div>);
+}
+
 function Metrics() {
   const [rows, setRows] = useState<any[]>([]);
   const [msg, setMsg] = useState("");
+  const [showing, setShowing] = useState("");   // metric whose lineage is open
   const refresh = useCallback(() => api("/metrics").then(setRows), []);
   useEffect(() => { refresh().catch(e => setMsg(e.message)); }, [refresh]);
   const approve = async (name: string) => {
@@ -232,8 +264,10 @@ function Metrics() {
         <tbody>{rows.map(m => <tr key={m.name} data-metric={m.name}>
           <td>{m.label} <small>v{m.version}</small></td><td>{m.description}</td><td><code>{m.expression}</code></td>
           <td>{m.status === "approved" ? "Approved" : "Needs approval"}</td>
-          <td>{m.status !== "approved" && <button onClick={() => approve(m.name)}>Approve {m.label}</button>}</td>
-        </tr>)}</tbody></table>
+          <td>{m.status !== "approved" && <button onClick={() => approve(m.name)}>Approve {m.label}</button>}{" "}
+            <button style={{ background: "#6b7280" }} onClick={() => setShowing(showing === m.name ? "" : m.name)}>{showing === m.name ? "Hide lineage" : "Show lineage"}</button></td>
+        </tr>).flatMap((tr, i) => showing === rows[i].name
+          ? [tr, <tr key={`${rows[i].name}-lineage`}><td colSpan={5}><LineagePanel name={rows[i].name} /></td></tr>] : [tr])}</tbody></table>
     </div></>);
 }
 
@@ -257,32 +291,107 @@ function Explanation({ a }: { a: any }) {
   </div>;
 }
 
+function AnswerView({ a }: { a: any }) {
+  if (a.outcome === "explanation") return <Explanation a={a} />;
+  if (a.outcome !== "answered") return <p>{a.message}</p>;
+  return <>
+    <table><thead><tr>{a.columns.map((c: string) => <th key={c}>{c}</th>)}</tr></thead>
+      <tbody>{a.rows.map((r: any[], i: number) => <tr key={i}>{r.map((v, j) => <td key={j}>{String(v)}</td>)}</tr>)}</tbody></table>
+    {a.truncated && <p><small>Showing the first {a.rows.length} of {a.rows_total} rows. Download the CSV for all of them.</small></p>}
+    <details><summary>How this was calculated</summary>
+      <p><b>{a.metric.label}</b>: {a.metric.definition} (<code>{a.metric.expression}</code>, v{a.metric.version})</p>
+      <p>Data up to {a.freshness.latest_order_date}</p><pre>{a.sql}</pre></details>
+    {(a.caveats || []).map((c: string) => <p key={c}><small>{c}</small></p>)}
+  </>;
+}
+
+type Msg = { id?: string; q: string; a: any; feedback?: string | null };
+
 function Ask() {
   const [q, setQ] = useState("");
-  const [a, setA] = useState<any>(null);
-  const [saved, setSaved] = useState("");
-  const save = async () => {
-    try { await api("/reports", { method: "POST", body: JSON.stringify({ title: q.slice(0, 120), question: q }) }); setSaved("Saved under Reports."); }
-    catch (e: any) { setSaved(e.message); }
+  const [conv, setConv] = useState("");
+  const [msgs, setMsgs] = useState<Msg[]>([]);
+  const [hist, setHist] = useState<any[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [role, setRole] = useState("");
+  const [note, setNote] = useState("");
+  const [why, setWhy] = useState<number | null>(null);   // which answer is being marked "not helpful"
+  const [reason, setReason] = useState("");
+  const loadHist = useCallback(() => api("/conversations").then(setHist).catch(() => {}), []);
+  useEffect(() => { loadHist(); api("/auth/me").then(r => setRole(r.role)).catch(() => {}); }, [loadHist]);
+
+  const send = async () => {
+    const text = q.trim();
+    if (!text || busy) return;
+    setBusy(true); setQ(""); setNote("");
+    try {
+      let id = conv;
+      if (!id) { id = (await api("/conversations", { method: "POST" })).id; setConv(id); }
+      const a = await api(`/conversations/${id}/messages`, { method: "POST", body: JSON.stringify({ question: text }) })
+        .catch(e => ({ outcome: "error", message: e.message }));
+      setMsgs(m => [...m, { id: a.message_id, q: text, a }]);
+      loadHist();
+    } catch (e: any) { setNote(e.message); }
+    finally { setBusy(false); }
   };
-  const go = async () => { setSaved(""); await ask(); };
-  const ask = async () => setA(await api("/analytics/query", { method: "POST", body: JSON.stringify({ question: q }) }).catch(e => ({ outcome: "error", message: e.message })));
+  const open = async (id: string) => {
+    if (!id) return;
+    try {
+      const c = await api(`/conversations/${id}`);
+      setConv(id); setNote(""); setWhy(null);
+      setMsgs(c.messages.map((x: any) => ({ id: x.id, q: x.question, feedback: x.feedback,
+        a: { ...x.answer, outcome: x.outcome, interpreted: x.interpreted } })));
+    } catch (e: any) { setNote(e.message); }
+  };
+  const fresh = () => { setConv(""); setMsgs([]); setNote(""); setWhy(null); setQ(""); };
+  const rate = async (i: number, rating: "up" | "down", comment?: string) => {
+    const m = msgs[i];
+    if (!m.id) return;
+    try {
+      await api(`/messages/${m.id}/feedback`, { method: "POST", body: JSON.stringify({ rating, comment: comment || undefined }) });
+      setMsgs(list => list.map((x, k) => k === i ? { ...x, feedback: rating } : x));
+      setWhy(null); setReason(""); setNote(rating === "up" ? "Thanks for the feedback." : "Thanks, noted.");
+    } catch (e: any) { setNote(e.message); }
+  };
+  const download = async (m: Msg) => {
+    try { await apiDownload(`/messages/${m.id}/export.csv`, `answer-${(m.id || "").slice(0, 8)}.csv`); setNote("CSV downloaded."); }
+    catch (e: any) { setNote(e.message); }
+  };
+  const save = async (m: Msg) => {
+    const question = m.a.interpreted || m.q;    // a follow-up is saved as the full question it meant
+    try { await api("/reports", { method: "POST", body: JSON.stringify({ title: question.slice(0, 120), question }) }); setNote("Saved under Reports."); }
+    catch (e: any) { setNote(e.message); }
+  };
+  const canExport = role === "admin" || role === "analyst";
   return (<>
-    <div style={card}><input style={{ width: "70%" }} placeholder="e.g. Why has gross profit changed over the last 3 months? Or: net revenue by category" value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => e.key === "Enter" && go()} /> <button onClick={go}>Ask</button></div>
-    {a && <div style={card}>
-      {a.outcome === "explanation" ? <>
-        <Explanation a={a} />
-        <p><button onClick={save}>Save as report</button> <small role="status">{saved}</small></p>
-      </> : a.outcome !== "answered" ? <p>{a.message}</p> : <>
-        <table><thead><tr>{a.columns.map((c: string) => <th key={c}>{c}</th>)}</tr></thead>
-          <tbody>{a.rows.map((r: any[], i: number) => <tr key={i}>{r.map((v, j) => <td key={j}>{String(v)}</td>)}</tr>)}</tbody></table>
-        <details><summary>How this was calculated</summary>
-          <p><b>{a.metric.label}</b>: {a.metric.definition} (<code>{a.metric.expression}</code>, v{a.metric.version})</p>
-          <p>Data up to {a.freshness.latest_order_date}</p><pre>{a.sql}</pre></details>
-        {a.caveats.map((c: string) => <p key={c}><small>{c}</small></p>)}
-        <p><button onClick={save}>Save as report</button> <small role="status">{saved}</small></p>
-      </>}
-    </div>}
+    <div style={card}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+        <button onClick={fresh} disabled={!msgs.length && !conv}>New conversation</button>
+        {hist.length > 0 && <select aria-label="Earlier conversations" value="" onChange={e => open(e.target.value)} style={{ maxWidth: 320 }}>
+          <option value="">Earlier conversations…</option>
+          {hist.map(h => <option key={h.id} value={h.id}>{h.title} ({h.messages})</option>)}
+        </select>}
+      </div>
+      <input style={{ width: "70%" }} disabled={busy} placeholder="e.g. Why has gross profit changed over the last 3 months? Or: net revenue by category"
+        value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => e.key === "Enter" && send()} /> <button onClick={send} disabled={busy}>Ask</button>
+      <p style={{ margin: "8px 0 0", fontSize: 13 }}>You can follow up, for example "and by region?", "what about the last 3 months?" or "same for gross profit".</p>
+      {note && <p role="status" data-testid="chat-note" style={{ margin: "8px 0 0" }}>{note}</p>}
+    </div>
+    <div data-testid="chat">
+      {msgs.map((m, i) => <div key={m.id || i} style={card} data-testid="chat-message">
+        <p style={{ marginTop: 0 }}><b>You:</b> {m.q}</p>
+        {m.a.interpreted && <p><small data-testid="understood">Understood as: {m.a.interpreted}</small></p>}
+        <AnswerView a={m.a} />
+        {m.id && (m.a.outcome === "answered" || m.a.outcome === "explanation") && <p style={{ marginBottom: 0 }}>
+          <button onClick={() => save(m)}>Save as report</button>{" "}
+          {m.a.outcome === "answered" && canExport && <><button onClick={() => download(m)}>Download CSV</button>{" "}</>}
+          <button onClick={() => rate(i, "up")} aria-pressed={m.feedback === "up"} style={m.feedback === "up" ? { outline: "2px solid #1a7f37" } : undefined}>Helpful</button>{" "}
+          <button onClick={() => setWhy(i)} aria-pressed={m.feedback === "down"} style={m.feedback === "down" ? { outline: "2px solid #b00020" } : undefined}>Not helpful</button>
+        </p>}
+        {why === i && <p><input style={{ width: "60%" }} placeholder="What was wrong? (optional)" maxLength={500} value={reason} onChange={e => setReason(e.target.value)} />{" "}
+          <button onClick={() => rate(i, "down", reason)}>Send</button> <button onClick={() => { setWhy(null); setReason(""); }}>Cancel</button></p>}
+      </div>)}
+    </div>
   </>);
 }
 
@@ -365,8 +474,10 @@ function Activity() {
   const [events, setEvents] = useState<any[]>([]);
   const [jobs, setJobs] = useState<any[]>([]);
   const [usage, setUsage] = useState<any>(null);
+  const [fb, setFb] = useState<any>(null);
   const [err, setErr] = useState("");
   useEffect(() => {
+    api("/feedback/summary").then(setFb).catch(() => {});
     api("/jobs").then(setJobs).catch(() => {});
     api("/usage").then(setUsage).catch(() => {});
     api("/activity").then(setEvents).catch(e => setErr(e.message));
@@ -380,6 +491,10 @@ function Activity() {
           {([["uploads", "Files uploaded (30 days)"], ["rows", "Rows loaded (30 days)"], ["questions", "Questions (24 hours)"], ["users", "People"], ["documents", "Knowledge documents"]] as [string, string][]).map(([k, label]) =>
             <tr key={k}><td>{label}</td><td>{Number(usage.quota.used[k]).toLocaleString()}</td><td>{usage.quota.limits[k] ? Number(usage.quota.limits[k]).toLocaleString() : "unlimited"}</td></tr>)}
         </tbody></table></div>}</div>}
+    {fb && <div style={card} data-testid="feedback"><h3 style={{ marginTop: 0 }}>Answer feedback</h3>
+      <p>{fb.helpful} marked helpful, {fb.not_helpful} marked not helpful.</p>
+      {fb.recent_not_helpful.length > 0 && <table><thead><tr><th>Question</th><th>What was wrong</th><th>When</th></tr></thead>
+        <tbody>{fb.recent_not_helpful.map((x: any, i: number) => <tr key={i}><td>{x.question}</td><td>{x.comment || "-"}</td><td>{new Date(x.created_at).toLocaleString()}</td></tr>)}</tbody></table>}</div>}
     <div style={card}><h3 style={{ marginTop: 0 }}>Upload jobs</h3>
       {!jobs.length ? <p>No uploads yet.</p> : <table><thead><tr><th>File</th><th>Status</th><th>Rows</th><th>When</th></tr></thead>
         <tbody>{jobs.map(j => <tr key={j.id}><td>{j.filename}</td><td>{j.status}{j.error_message ? `: ${j.error_message}` : ""}</td><td>{j.rows_loaded}</td><td>{new Date(j.created_at).toLocaleString()}</td></tr>)}</tbody></table>}</div>

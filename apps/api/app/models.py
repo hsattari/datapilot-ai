@@ -244,3 +244,30 @@ class DeletionRecord(Base):
     requested_by: Mapped[str] = mapped_column(String(36))            # opaque user id (that user is erased with the tenant)
     counts: Mapped[dict] = mapped_column(JSON, default=dict)
     deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class Conversation(Base):
+    """A person's chat with their data. Private to the person who started it (and erased with them)."""
+    __tablename__ = "conversations"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    title: Mapped[str] = mapped_column(String(120), default="New conversation")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class ConversationMessage(Base):
+    """One question and the answer given. The stored plan is what makes follow-ups and exports re-checkable."""
+    __tablename__ = "conversation_messages"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    conversation_id: Mapped[str] = mapped_column(ForeignKey("conversations.id"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    question: Mapped[str] = mapped_column(Text)
+    outcome: Mapped[str] = mapped_column(String(30))                 # answered | explanation | refusal | clarification
+    plan: Mapped[dict] = mapped_column(JSON, default=dict)
+    interpreted: Mapped[str | None] = mapped_column(Text, nullable=True)    # follow-ups: the full question as understood
+    answer: Mapped[dict] = mapped_column(JSON, default=dict)         # what was shown; rows capped (the export re-runs the plan)
+    feedback: Mapped[str | None] = mapped_column(String(10), nullable=True)   # up | down
+    feedback_comment: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

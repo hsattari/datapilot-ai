@@ -13,14 +13,16 @@ from .deps import Principal, get_principal, require_admin, require_writer
 from .routers.knowledge import router as knowledge_router
 from .routers.auth import router as auth_router
 from .routers.workspace import router as workspace_router
+from .routers.lineage import router as lineage_router
 from .routers.lifecycle import router as lifecycle_router
+from .routers.conversations import router as conversations_router
 from . import observability
 from .services import ratelimit
 from .schemas import ApproveIn, QuestionIn, RegisterIn, SourceIn
 from .security import create_token, hash_password
 from .services.backends import get_backend
 from .services.common import audit, owned, preview_plan, run_plan
-from .services import insights, modelling, quality, quotas, semantic
+from .services import answering, insights, modelling, quality, quotas, semantic
 from .services.planner import make_plan
 from .services.query_engine import QueryRejected
 from .services.storage import get_storage, safe_filename
@@ -66,6 +68,8 @@ app.include_router(auth_router)
 app.include_router(knowledge_router)
 app.include_router(workspace_router)
 app.include_router(lifecycle_router)
+app.include_router(conversations_router)
+app.include_router(lineage_router)
 
 
 @app.get("/healthz")
@@ -289,54 +293,7 @@ def analytics_preview(body: QuestionIn, p: Principal = Depends(get_principal), d
 
 @app.post("/api/v1/analytics/query", dependencies=[ratelimit.by_user("query", "rate_query_per_minute")])
 def analytics_query(body: QuestionIn, p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
-    quotas.enforce(db, p.tenant_id, "questions")
-    approved = {x.name: x.description for x in db.scalars(select(m.Metric).where(
-        m.Metric.tenant_id == p.tenant_id, m.Metric.status == "approved"))}
-    unapproved = {x.name: x.description for x in db.scalars(select(m.Metric).where(
-        m.Metric.tenant_id == p.tenant_id, m.Metric.status != "approved"))}
-    res = make_plan(body.question, approved, unapproved)
-    if res.outcome == "explain":
-        try:
-            out = insights.explain_change(db, p, res.metric, res.months)
-        except insights.NotEnoughData as e:
-            db.add(m.AnalyticalQuery(tenant_id=p.tenant_id, user_id=p.user_id, question=body.question[:1000],
-                                     outcome="clarification"))
-            audit(db, p, "query.clarification")
-            db.commit()
-            return {"outcome": "clarification", "message": str(e), "planner": res.source}
-        except QueryRejected as e:
-            audit(db, p, "query.rejected", reason=str(e))
-            db.commit()
-            return {"outcome": "refusal", "message": str(e)}
-        except Exception:
-            return {"outcome": "clarification",
-                    "message": "No approved data model is available yet. Upload and approve a dataset first."}
-        db.add(m.AnalyticalQuery(tenant_id=p.tenant_id, user_id=p.user_id, question=body.question[:1000],
-                                 plan={"intent": "explain_change", "metric": res.metric, "months": res.months},
-                                 sql_text="\n".join(out["sql"]), outcome="answered"))
-        audit(db, p, "query.explained", metric=res.metric)
-        db.commit()
-        return {"outcome": "explanation", "planner": res.source, **out}
-    if res.outcome != "plan":
-        db.add(m.AnalyticalQuery(tenant_id=p.tenant_id, user_id=p.user_id, question=body.question[:1000],
-                                 outcome=res.outcome))
-        audit(db, p, f"query.{res.outcome}")
-        db.commit()
-        return {"outcome": res.outcome, "message": res.message, "planner": res.source}
-    try:
-        out = run_plan(db, p, res.plan)
-    except QueryRejected as e:
-        audit(db, p, "query.rejected", reason=str(e))
-        db.commit()
-        return {"outcome": "refusal", "message": str(e)}
-    except Exception:
-        return {"outcome": "clarification",
-                "message": "No approved data model is available yet. Upload and approve a dataset first."}
-    db.add(m.AnalyticalQuery(tenant_id=p.tenant_id, user_id=p.user_id, question=body.question[:1000],
-                             plan=res.plan.model_dump(), sql_text=out["sql"], outcome="answered"))
-    audit(db, p, "query.answered", metric=res.plan.metric)
-    db.commit()
-    return {"outcome": "answered", "plan": res.plan.model_dump(), "planner": res.source, **out}
+    return answering.answer_question(db, p, body.question)
 
 
 @app.get("/api/v1/insights")

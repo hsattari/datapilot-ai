@@ -105,6 +105,7 @@ class PlanResult:
     fallback_reason: str | None = None    # exception type or "not_configured" when the model path was not used
     metric: str | None = None             # explain: the approved metric to decompose
     months: int = 1                       # explain: compare the last N complete months with the N before
+    interpreted: str | None = None        # follow-ups: the full question as understood, shown back to the person
 
 
 def rule_plan(question: str, approved: dict[str, str]) -> PlanResult:
@@ -149,6 +150,72 @@ def rule_plan(question: str, approved: dict[str, str]) -> PlanResult:
     except ValidationError:
         return PlanResult("clarification", "I could not build a valid analysis from that question.")
 
+
+
+# ---------------------------------------------------------------- follow-up questions
+# "and by region?", "what about last 3 months", "same for gross profit", "now for product Widget".
+# Resolved by rules, never by the model: the new question is the PREVIOUS plan with only the parts the person named
+# replaced, and it goes through exactly the same validation and policy checks as any other plan.
+FOLLOW_LEAD = re.compile(r"^\s*(?:(?:and|also|now|then|ok(?:ay)?|so|what about|how about|same (?:for|but|again)|just|only)\s+)+", re.I)
+FOLLOW_CUE = re.compile(r"^\s*(?:and|also|now|then|ok(?:ay)?|so|what about|how about|same (?:for|but|again)|"
+                        r"break (?:it|that|this) down|split (?:it|that|this)|show (?:it|that|this)|by|per|for|in|over|"
+                        r"just|only|excluding|except)\b", re.I)
+_TIME = re.compile(r"last (\d+) months?|by month|over time|trend")
+
+
+def _metric_in(q: str) -> str | None:
+    return next((m for m, ws in METRIC_WORDS.items() if any(w in q for w in ws)), None)
+
+
+def _describe(plan: Plan) -> str:
+    """The follow-up as a complete question. Shown to the person, and re-askable on its own (saved reports use it)."""
+    out = plan.metric.replace("_", " ")
+    if plan.dimensions:
+        out += " by " + " and ".join(plan.dimensions)
+    if plan.time_range.type == "last_n_complete_months":
+        out += f" for the last {plan.time_range.n} months"
+    for f in plan.filters:
+        out += f" for {f.field} {f.value}"
+    return out
+
+
+def followup_plan(question: str, approved: dict[str, str], prev: dict | None) -> "PlanResult | None":
+    """The question as a change to the previous plan, or None when it is not a follow-up (a normal, complete question)."""
+    if not prev or not prev.get("metric"):
+        return None
+    q = question.lower()
+    named_metric = _metric_in(q)
+    cue = bool(FOLLOW_CUE.match(question))
+    filters_in, _, _ = _extract_filters(question)
+    names_part = (any(re.search(rf"\b{re.escape(w)}", q) for ws in DIM_WORDS.values() for w in ws)
+                  or bool(_TIME.search(q)) or bool(filters_in))
+    if named_metric and not cue:
+        return None                       # a complete question of its own
+    if not named_metric and not (cue or names_part):
+        return None                       # nothing to tie it to the previous answer: the normal path will ask
+    metric = named_metric or prev["metric"]
+    body = FOLLOW_LEAD.sub("", question).strip()
+    word = METRIC_WORDS.get(metric, [metric])[0]
+    res = rule_plan(f"{word} {body}" if not named_metric else body, approved)
+    if res.outcome != "plan":
+        return res                        # refusals and clarifications (unknown names, unsupported asks) pass straight through
+    new = res.plan
+    dims = list(new.dimensions) or list(prev.get("dimensions") or [])
+    time_range = new.time_range.model_dump() if new.time_range.type != "all_time" else (prev.get("time_range") or {"type": "all_time"})
+    fields = {f.field for f in new.filters}
+    filters = [f.model_dump() for f in new.filters] + [f for f in (prev.get("filters") or []) if f.get("field") not in fields]
+    intent = ("compare_metric_over_time" if "month" in dims else "metric_breakdown" if dims else "metric_total")
+    viz = {"compare_metric_over_time": "line_chart", "metric_breakdown": "bar_chart", "metric_total": "number"}[intent]
+    try:
+        plan = Plan(intent=intent, metric=metric, dimensions=dims[:2], filters=filters[:5], time_range=time_range, visualization=viz)
+    except ValidationError:
+        return PlanResult("clarification", "I could not combine that with the previous question. Please ask it in full.")
+    if metric not in approved:
+        return PlanResult("clarification", f"'{metric}' is not an approved metric yet. "
+                          "Confirm its definition and required source data first.")
+    out = PlanResult("plan", plan=plan)
+    out.interpreted = _describe(plan)
+    return out
 
 log = logging.getLogger("datapilot.planner")
 LLM_TIMEOUT_SECONDS = 20
@@ -245,11 +312,15 @@ def llm_plan(question: str, approved: dict[str, str], unapproved: dict[str, str]
     return PlanResult("plan", plan=plan, source="llm"), None
 
 
-def make_plan(question: str, approved: dict[str, str], unapproved: dict[str, str] | None = None) -> PlanResult:
+def make_plan(question: str, approved: dict[str, str], unapproved: dict[str, str] | None = None,
+              prev: dict | None = None) -> PlanResult:
     if REFUSE.search(question.lower()):  # hard policy check runs before any model call
         return PlanResult("refusal", "I can only answer read-only questions about your own approved metrics.")
     if UNSUPPORTED.search(question.lower()):  # a plan cannot express these; do not let a model answer another question
         return PlanResult("clarification", UNSUPPORTED_MSG)
+    fu = followup_plan(question, approved, prev)  # a change to the previous plan: rules only, never the model
+    if fu is not None:
+        return fu
     ex = explain_request(question, approved)  # before the model: a decomposition is computed, not generated
     if ex is not None:
         return ex

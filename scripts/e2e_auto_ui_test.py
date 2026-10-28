@@ -33,6 +33,12 @@ with sync_playwright() as p:
     page.get_by_role("button", name="Business Metrics").click()
     expect(page.locator("tr[data-metric=gross_profit]")).to_contain_text("Approved", timeout=10000)
     print("OK gross profit is already approved")
+    page.locator("tr[data-metric=gross_profit]").get_by_role("button", name="Show lineage").click()
+    lin = page.get_by_test_id("lineage")
+    expect(lin).to_contain_text("column cost of orders_reference.csv", timeout=10000)
+    expect(lin).to_contain_text("Sales (fact table): built, 3 rows from orders_reference.csv")
+    expect(lin).to_contain_text("net_sales - cost_of_goods_sold")
+    print("OK lineage shows gross profit traced to the cost column of the uploaded file")
 
     page.get_by_role("button", name="Home").click()
     expect(page.get_by_text("Net Revenue: 350")).to_be_visible(timeout=10000)

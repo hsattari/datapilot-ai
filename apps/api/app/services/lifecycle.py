@@ -74,7 +74,8 @@ def build_export(db: Session, tenant_id: str, include_raw: bool = False) -> byte
     for name, model in [("data_sources", m.DataSource), ("source_files", m.SourceFile), ("ingestion_jobs", m.IngestionJob),
                         ("datasets", m.Dataset), ("schema_versions", m.SchemaVersion), ("quality_results", m.QualityResult),
                         ("metrics", m.Metric), ("reports", m.Report), ("alerts", m.Alert),
-                        ("questions", m.AnalyticalQuery), ("audit_events", m.AuditEvent)]:
+                        ("questions", m.AnalyticalQuery), ("conversations", m.Conversation),
+                        ("conversation_messages", m.ConversationMessage), ("audit_events", m.AuditEvent)]:
         files[f"metadata/{name}.json"] = _json(_dump(db, model, tenant_id))
     docs = []
     for d in db.scalars(select(m.Document).where(m.Document.tenant_id == tenant_id)):
@@ -148,6 +149,10 @@ def erase_user(db: Session, tenant_id: str, user_id: str) -> None:
     u.password_hash = hash_password(secrets.token_urlsafe(32))  # unusable
     u.disabled, u.failed_logins, u.locked_until = True, 0, None
     u.mfa_enabled, u.mfa_secret, u.mfa_recovery, u.mfa_last_step = False, None, [], None
+    # their chats (question text can contain personal data) go with them
+    db.execute(delete(m.ConversationMessage).where(m.ConversationMessage.tenant_id == tenant_id,
+                                                   m.ConversationMessage.user_id == user_id))
+    db.execute(delete(m.Conversation).where(m.Conversation.tenant_id == tenant_id, m.Conversation.user_id == user_id))
     db.execute(delete(m.UserIdentity).where(m.UserIdentity.user_id == user_id))
     db.execute(delete(m.TenantMembership).where(m.TenantMembership.tenant_id == tenant_id,
                                                 m.TenantMembership.user_id == user_id))
@@ -163,6 +168,13 @@ def purge_expired(db: Session, now: datetime | None = None) -> dict:
     if s.retention_queries_days > 0:
         out["questions"] = db.execute(delete(m.AnalyticalQuery).where(
             m.AnalyticalQuery.created_at < now - timedelta(days=s.retention_queries_days))).rowcount or 0
+        cutoff = now - timedelta(days=s.retention_queries_days)
+        out["conversation_messages"] = db.execute(delete(m.ConversationMessage).where(
+            m.ConversationMessage.created_at < cutoff)).rowcount or 0
+        out["conversations"] = db.execute(delete(m.Conversation).where(
+            m.Conversation.created_at < cutoff,
+            ~select(m.ConversationMessage.id).where(m.ConversationMessage.conversation_id == m.Conversation.id).exists()
+        )).rowcount or 0
     if s.retention_audit_days > 0:
         out["audit_events"] = db.execute(delete(m.AuditEvent).where(
             m.AuditEvent.created_at < now - timedelta(days=s.retention_audit_days))).rowcount or 0
