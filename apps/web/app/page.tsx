@@ -468,10 +468,29 @@ function LineagePanel({ name }: { name: string }) {
   </div>);
 }
 
+function MetricDetails({ m, onSaved }: { m: any; onSaved: () => void }) {
+  const [owner, setOwner] = useState(m.owner || ""); const [unit, setUnit] = useState(m.unit || "");
+  const [qs, setQs] = useState((m.example_questions || []).join("\n")); const [msg, setMsg] = useState("");
+  const save = async () => {
+    try { await api(`/metrics/${m.name}`, { method: "PATCH", body: JSON.stringify({ owner: owner || null, unit: unit || null,
+      example_questions: qs.split("\n").map((x: string) => x.trim()).filter(Boolean) }) }); setMsg("Saved."); onSaved(); }
+    catch (e: any) { setMsg(e.message); }
+  };
+  return (<div data-testid="metric-details">
+    <label>Owner (who answers questions about this number)<input value={owner} onChange={e => setOwner(e.target.value)} maxLength={200} /></label>
+    <label>Unit<select value={unit} onChange={e => setUnit(e.target.value)}><option value="">Not set</option><option value="currency">Currency</option>
+      <option value="count">Count</option><option value="percent">Percent</option><option value="text">Text</option></select></label>
+    <label>Example questions, one per line (up to 5)<textarea rows={3} value={qs} onChange={e => setQs(e.target.value)} /></label>
+    <button onClick={save}>Save details</button> {msg && <small role="status">{msg}</small>}
+    <small style={{ display: "block" }}>Changing these never changes the definition, version or approval. Administrators only.</small>
+  </div>);
+}
+
 function Metrics() {
   const [rows, setRows] = useState<any[]>([]);
   const [msg, setMsg] = useState("");
   const [showing, setShowing] = useState("");   // metric whose lineage is open
+  const [editing, setEditing] = useState("");
   const refresh = useCallback(() => api("/metrics").then(setRows), []);
   useEffect(() => { refresh().catch(e => setMsg(e.message)); }, [refresh]);
   const approve = async (name: string) => {
@@ -484,12 +503,14 @@ function Metrics() {
       {msg && <p role="status">{msg}</p>}
       <table><thead><tr><th>Metric</th><th>Definition</th><th>Formula</th><th>Status</th><th></th></tr></thead>
         <tbody>{rows.map(m => <tr key={m.name} data-metric={m.name}>
-          <td>{m.label} <small>v{m.version}</small></td><td>{m.description}</td><td><code>{m.expression}</code></td>
+          <td>{m.label} <small>v{m.version}</small>{(m.owner || m.unit) && <div><small>{m.owner ? `Owner: ${m.owner}` : ""}{m.owner && m.unit ? " · " : ""}{m.unit ? `Unit: ${m.unit}` : ""}</small></div>}</td><td>{m.description}{(m.example_questions || []).map((q: string) => <div key={q}><small>e.g. {q}</small></div>)}</td><td><code>{m.expression}</code></td>
           <td>{m.status === "approved" ? "Approved" : "Needs approval"}</td>
           <td>{m.status !== "approved" && <button onClick={() => approve(m.name)}>Approve {m.label}</button>}{" "}
-            <button style={{ background: "#6b7280" }} onClick={() => setShowing(showing === m.name ? "" : m.name)}>{showing === m.name ? "Hide lineage" : "Show lineage"}</button></td>
-        </tr>).flatMap((tr, i) => showing === rows[i].name
-          ? [tr, <tr key={`${rows[i].name}-lineage`}><td colSpan={5}><LineagePanel name={rows[i].name} /></td></tr>] : [tr])}</tbody></table>
+            <button style={{ background: "#6b7280" }} onClick={() => setShowing(showing === m.name ? "" : m.name)}>{showing === m.name ? "Hide lineage" : "Show lineage"}</button>{" "}
+            <button style={{ background: "#6b7280" }} onClick={() => setEditing(editing === m.name ? "" : m.name)}>{editing === m.name ? "Close details" : "Edit details"}</button></td>
+        </tr>).flatMap((tr, i) => [tr,
+          ...(editing === rows[i].name ? [<tr key={`${rows[i].name}-edit`}><td colSpan={5}><MetricDetails m={rows[i]} onSaved={refresh} /></td></tr>] : []),
+          ...(showing === rows[i].name ? [<tr key={`${rows[i].name}-lineage`}><td colSpan={5}><LineagePanel name={rows[i].name} /></td></tr>] : [])])}</tbody></table>
     </div></>);
 }
 

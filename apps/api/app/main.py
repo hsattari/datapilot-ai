@@ -1,8 +1,10 @@
 import hashlib
+from typing import Annotated, Literal
 from datetime import date
 
 from starlette.concurrency import run_in_threadpool
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -257,7 +259,27 @@ def relationships(p: Principal = Depends(get_principal), db: Session = Depends(g
 def list_metrics(p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     rows = db.scalars(select(m.Metric).where(m.Metric.tenant_id == p.tenant_id)).all()
     return [{"name": x.name, "label": x.label, "description": x.description, "expression": x.expression,
-             "aggregation": x.aggregation, "status": x.status, "version": x.version} for x in rows]
+             "aggregation": x.aggregation, "status": x.status, "version": x.version,
+             "owner": x.owner, "unit": x.unit, "example_questions": x.example_questions or []} for x in rows]
+
+
+class MetricMeta(BaseModel):
+    owner: str | None = Field(default=None, max_length=200)
+    unit: Literal["currency", "count", "percent", "text"] | None = None
+    example_questions: list[Annotated[str, Field(max_length=200)]] = Field(default_factory=list, max_length=5)
+
+
+@app.patch("/api/v1/metrics/{name}")
+def update_metric_meta(name: str, body: MetricMeta, p: Principal = Depends(require_admin), db: Session = Depends(get_db)):
+    """Owner, unit and example questions only. The definition, version and approval are not touched."""
+    x = db.scalar(select(m.Metric).where(m.Metric.tenant_id == p.tenant_id, m.Metric.name == name))
+    if x is None:
+        raise HTTPException(404, "Metric not found")
+    x.owner, x.unit = (body.owner or "").strip() or None, body.unit
+    x.example_questions = [q.strip() for q in body.example_questions if q.strip()]
+    audit(db, p, "metric.metadata_updated", name=name)
+    db.commit()
+    return {"name": x.name, "owner": x.owner, "unit": x.unit, "example_questions": x.example_questions}
 
 
 @app.post("/api/v1/metrics/{name}/approve")

@@ -138,6 +138,10 @@ class Metric(Base):
     dimensions: Mapped[list] = mapped_column(JSON, default=list)
     status: Mapped[str] = mapped_column(String(30), default="requires_business_approval")
     version: Mapped[int] = mapped_column(Integer, default=1)
+    # Descriptive metadata: editing it never changes the definition, the version or the approval.
+    owner: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    unit: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    example_questions: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 

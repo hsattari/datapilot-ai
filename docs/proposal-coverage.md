@@ -41,7 +41,7 @@ Status words, used strictly:
 | Item | Status | Detail |
 |---|---|---|
 | Metric registry with approval gate, required-input check, version | Tested | Built-in metrics are now approved automatically when their columns exist (admin can switch off); custom metrics always need an administrator |
-| Owner, unit, default filters, effective date, example questions, `metric_dimensions` | Partial | Name, description, expression, aggregation, status, version, allowed dimensions exist. The rest is not stored |
+| Owner, unit, default filters, effective date, example questions, `metric_dimensions` | Partial | Name, description, expression, aggregation, status, version, allowed dimensions exist. **Owner, unit and example questions** are now stored and editable by administrators (Business Metrics > Edit details) without changing the definition, version or approval: **Tested**. Not stored: default filters, effective date, a separate `metric_dimensions` table |
 
 ## 9. Power BI
 
@@ -95,7 +95,7 @@ Ask Your Data is now a chat (follow-ups, history, feedback, CSV download). Dashb
 | Observability (request IDs, JSON logs, spans) | Tested | Not checked against a real Application Insights resource |
 | Terraform for the data layer and hosting | **Verified** | Applied by the owner. Missing: private networking, custom domain, WAF |
 | CI | Tested | GitHub Actions: api, web, PostgreSQL + pgvector, dbt. Not built: image scanning, staging smoke tests, separate dev/test/staging/prod environments |
-| Runbook, rollback, incident response | Partial | `docs/operations/runbook.md`; no incident-response document |
+| Runbook, rollback, incident response | Partial | `docs/operations/runbook.md`; `docs/operations/incident-response.md` is a **starter outline** (not legal advice; contacts table is blank for the owner to fill). No tested image rollback procedure or incident drill |
 | Tiers, quotas, per-tenant limits | Tested | Plan per organisation (starter / growth / advanced / enterprise) with limits on uploads, rows loaded, questions per day, people and documents; 429 with a clear message at the limit, warning from 80%, shown in Usage and on Home. The numbers are **placeholders, not validated pricing**; the plan is set by the service owner (no customer endpoint). Not built: AI token and embedding budgets, storage-size and compute-cost tracking, billing |
 | Lineage source -> model -> metric -> report/alert -> answer | Tested | `GET /lineage` (graph) and `GET /lineage/metrics/{name}` (column-by-column trace to the uploaded file with its checksum, the models built, definition and version, reports/alerts/answers that use it); shown under Business Metrics > Show lineage. Unmapped inputs are reported, never hidden. Not built: lineage for dashboards and for dbt model dependencies |
 
