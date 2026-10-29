@@ -54,7 +54,7 @@ Status words, used strictly:
 | Item | Status | Detail |
 |---|---|---|
 | Ten-step request lifecycle | Tested | Server-side tenant, hard refusals before the model, plan validated, SQL validated (single SELECT, allowlist, LIMIT), read-only execution, provenance, audit |
-| Gold-question set and gates | Partial | 29 planner cases (**Verified** live) plus a security regression suite. Not built: stored evaluation results per release (`ai_evaluations`), latency and cost per question, repeated runs |
+| Gold-question set and gates | Partial | 33 planner cases (the first 29 **Verified** live; the four added since have not been run live) plus a security regression suite. `scripts/eval_planner.py --record` now saves a result file per release (commit, mode, per-case result, planner used, median/slowest latency, repeated runs) and flags regressions against the previous file; stored as files in `docs/evaluations/`, not a database table. A rules-only baseline is recorded (31/33). **No live record exists yet**: the owner must run it with the Azure key. Not measured: token counts and cost |
 | MCP tools | Tested | 12 read-only tools cover all 8 the proposal names (`ask_data` is its `run_approved_query`). Not tested with a specific MCP client app |
 | Copilot readiness | Not built | Needs Fabric/Power BI licensing |
 

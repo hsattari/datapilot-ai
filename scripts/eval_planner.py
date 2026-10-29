@@ -4,6 +4,12 @@
     python scripts/eval_planner.py --rules         # baseline: the built-in rule planner only (no model, no .env)
     python scripts/eval_planner.py --repeat 3      # run every case 3 times to expose non-determinism
     python scripts/eval_planner.py --only margin_percent,forecast
+    python scripts/eval_planner.py --record docs/evaluations     # also save a result file for this release (see below)
+
+--record DIR writes DIR/<UTC time>-<git commit>-<rules|live>.json with the commit, mode, deployment name (never keys), how many
+times each case ran, per-case pass/fail, which planner answered, and latency (median and slowest, in milliseconds), then
+compares with the newest earlier file of the same mode and prints any case that passed before and fails now. Token counts and
+cost are NOT measured (the planner does not report them).
 
 What it checks per case (tests/ai_evaluation/planner_cases.json): the outcome (plan / clarification / refusal), and for
 plans the metric, dimensions, intent, time window and filters. It prints which planner answered (llm or rules) and, if
@@ -11,9 +17,13 @@ the model was configured but the answer came from the rules, the reason (excepti
 against data and no secrets are printed. Exit code 1 if any case fails or the live model was not actually used.
 """
 import argparse
+import datetime
 import json
 import pathlib
+import statistics
+import subprocess
 import sys
+import time
 from collections import Counter
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -23,6 +33,7 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--rules", action="store_true", help="ignore Azure settings and use the rule planner only")
 ap.add_argument("--repeat", type=int, default=1)
 ap.add_argument("--only", default="")
+ap.add_argument("--record", default="", help="directory for the result file")
 ap.add_argument("--cases", default=str(ROOT / "tests" / "ai_evaluation" / "planner_cases.json"))
 args = ap.parse_args()
 
@@ -79,13 +90,15 @@ def judge(case, res):
     return bad
 
 
-results, sources, reasons = [], Counter(), Counter()
+results, sources, reasons, detail = [], Counter(), Counter(), []
 for case in cases:
     unapproved = {n: DESC[n] for n in case.get("unapproved", [])}
     approved = {n: d for n, d in DESC.items() if n not in unapproved}
-    outcomes = []
+    outcomes, lat = [], []
     for _ in range(args.repeat):
+        t0 = time.perf_counter()
         res = planner.make_plan(case["question"], approved, unapproved)
+        lat.append(round((time.perf_counter() - t0) * 1000))
         problems = judge(case, res)
         sources[res.source] += 1
         if res.fallback_reason and res.fallback_reason != "not_configured":
@@ -93,6 +106,8 @@ for case in cases:
         outcomes.append((res, problems))
     ok = all(not pr for _, pr in outcomes)
     results.append((case, ok))
+    detail.append({"id": case["id"], "passed": ok, "runs": args.repeat, "planner": sorted({r_.source for r_, _ in outcomes}),
+                   "problems": sorted({x for _, pr_ in outcomes for x in pr_}), "latency_ms_median": int(statistics.median(lat)), "latency_ms_max": max(lat)})
     res, problems = next(((r, pr) for r, pr in outcomes if pr), outcomes[0])
     summary = (f"{res.plan.metric} {res.plan.dimensions or ''} {res.plan.time_range.type if res.plan.time_range.type != 'all_time' else ''}"
                if res.outcome == "plan" else res.outcome)
@@ -118,4 +133,30 @@ if live and reasons:
           "PermissionDeniedError = key, endpoint or deployment name; APITimeoutError/APIConnectionError = network; "
           "BadRequestError = the request itself was refused (check the deployment supports JSON mode and the API version).")
 print("(Cases answered by 'rules' without a reason are the hard policy checks that run before the model on purpose.)")
+
+if args.record:
+    try:
+        sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True, timeout=10).stdout.strip() or "unknown"
+    except Exception:  # noqa: BLE001
+        sha = "unknown"
+    mode = "live" if live else "rules"
+    out = pathlib.Path(args.record)
+    out.mkdir(parents=True, exist_ok=True)
+    earlier = sorted(out.glob(f"*-{mode}.json"))
+    now = datetime.datetime.now(datetime.timezone.utc)
+    rec = {"recorded_at": now.isoformat(timespec="seconds"), "commit": sha, "mode": mode,
+           "deployment": s.azure_openai_deployment if live else None, "runs_per_case": args.repeat,
+           "passed": passed, "total": len(results), "planner_used": dict(sources), "cases": detail,
+           "not_measured": ["token counts", "cost"]}
+    path = out / f"{now:%Y%m%dT%H%M%SZ}-{sha}-{mode}.json"
+    path.write_text(json.dumps(rec, indent=2) + "\n")
+    print(f"Recorded {path}")
+    if earlier:
+        before = {c["id"]: c["passed"] for c in json.loads(earlier[-1].read_text())["cases"]}
+        regressed = [c["id"] for c in detail if before.get(c["id"]) and not c["passed"]]
+        if regressed:
+            rc = 1
+            print(f"REGRESSION since {earlier[-1].name}: " + ", ".join(regressed))
+        else:
+            print(f"No regressions against {earlier[-1].name}.")
 sys.exit(rc)

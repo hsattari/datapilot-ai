@@ -1,0 +1,385 @@
+{
+  "recorded_at": "2026-10-29T07:42:48+00:00",
+  "commit": "d8b86ce",
+  "mode": "rules",
+  "deployment": null,
+  "runs_per_case": 1,
+  "passed": 31,
+  "total": 33,
+  "planner_used": {
+    "rules": 33
+  },
+  "cases": [
+    {
+      "id": "total_revenue",
+      "passed": true,
+      "runs": 1,
+      "planner": [
+        "rules"
+      ],
+      "problems": [],
+      "latency_ms_median": 2,
+      "latency_ms_max": 2
+    },
+    {
+      "id": "sold_in_total",
+      "passed": false,
+      "runs": 1,
+      "planner": [
+        "rules"
+      ],
+      "problems": [
+        "outcome 'clarification', wanted plan"
+      ],
+      "latency_ms_median": 0,
+      "latency_ms_max": 0
+    },
+    {
+      "id": "turnover",
+      "passed": true,
+      "runs": 1,
+      "planner": [
+        "rules"
+      ],
+      "problems": [],
+      "latency_ms_median": 0,
+      "latency_ms_max": 0
+    },
+    {
+      "id": "order_count",
+      "passed": true,
+      "runs": 1,
+      "planner": [
+        "rules"
+      ],
+      "problems": [],
+      "latency_ms_median": 0,
+      "latency_ms_max": 0
+    },
+    {
+      "id": "gross_profit",
+      "passed": true,
+      "runs": 1,
+      "planner": [
+        "rules"
+      ],
+      "problems": [],
+      "latency_ms_median": 0,
+      "latency_ms_max": 0
+    },
+    {
+      "id": "profit_by_product",
+      "passed": true,
+      "runs": 1,
+      "planner": [
+        "rules"
+      ],
+      "problems": [],
+      "latency_ms_median": 0,
+      "latency_ms_max": 0
+    },
+    {
+      "id": "revenue_by_region",
+      "passed": true,
+      "runs": 1,
+      "planner": [
+        "rules"
+      ],
+      "problems": [],
+      "latency_ms_median": 0,
+      "latency_ms_max": 0
+    },
+    {
+      "id": "monthly_trend",
+      "passed": true,
+      "runs": 1,
+      "planner": [
+        "rules"
+      ],
+      "problems": [],
+      "latency_ms_median": 0,
+      "latency_ms_max": 0
+    },
+    {
+      "id": "last_6_months",
+      "passed": true,
+      "runs": 1,
+      "planner": [
+        "rules"
+      ],
+      "problems": [],
+      "latency_ms_median": 0,
+      "latency_ms_max": 0
+    },
+    {
+      "id": "orders_by_customer",
+      "passed": true,
+      "runs": 1,
+      "planner": [
+        "rules"
+      ],
+      "problems": [],
+      "latency_ms_median": 0,
+      "latency_ms_max": 0
+    },
+    {
+      "id": "filter_region",
+      "passed": true,
+      "runs": 1,
+      "planner": [
+        "rules"
+      ],
+      "problems": [],
+      "latency_ms_median": 0,
+      "latency_ms_max": 0
+    },
+    {
+      "id": "profit_by_category",
+      "passed": true,
+      "runs": 1,
+      "planner": [
+        "rules"
+      ],
+      "problems": [],
+      "latency_ms_median": 0,
+      "latency_ms_max": 0
+    },
+    {
+      "id": "revenue_by_segment",
+      "passed": true,
+      "runs": 1,
+      "planner": [
+        "rules"
+      ],
+      "problems": [],
+      "latency_ms_median": 0,
+      "latency_ms_max": 0
+    },
+    {
+      "id": "two_dimensions",
+      "passed": true,
+      "runs": 1,
+      "planner": [
+        "rules"
+      ],
+      "problems": [],
+      "latency_ms_median": 0,
+      "latency_ms_max": 0
+    },
+    {
+      "id": "filter_and_window",
+      "passed": false,
+      "runs": 1,
+      "planner": [
+        "rules"
+      ],
+      "problems": [
+        "outcome 'clarification', wanted plan"
+      ],
+      "latency_ms_median": 0,
+      "latency_ms_max": 0
+    },
+    {
+      "id": "why_profit_changed",
+      "passed": true,
+      "runs": 1,
+      "planner": [
+        "rules"
+      ],
+      "problems": [],
+      "latency_ms_median": 0,
+      "latency_ms_max": 0
+    },
+    {
+      "id": "what_drove_revenue",
+      "passed": true,
+      "runs": 1,
+      "planner": [
+        "rules"
+      ],
+      "problems": [],
+      "latency_ms_median": 0,
+      "latency_ms_max": 0
+    },
+    {
+      "id": "why_turnover_dropped",
+      "passed": true,
+      "runs": 1,
+      "planner": [
+        "rules"
+      ],
+      "problems": [],
+      "latency_ms_median": 0,
+      "latency_ms_max": 0
+    },
+    {
+      "id": "anomalies_in_sales",
+      "passed": true,
+      "runs": 1,
+      "planner": [
+        "rules"
+      ],
+      "problems": [],
+      "latency_ms_median": 0,
+      "latency_ms_max": 0
+    },
+    {
+      "id": "why_unknown_metric",
+      "passed": true,
+      "runs": 1,
+      "planner": [
+        "rules"
+      ],
+      "problems": [],
+      "latency_ms_median": 0,
+      "latency_ms_max": 0
+    },
+    {
+      "id": "margin_percent",
+      "passed": true,
+      "runs": 1,
+      "planner": [
+        "rules"
+      ],
+      "problems": [],
+      "latency_ms_median": 0,
+      "latency_ms_max": 0
+    },
+    {
+      "id": "forecast",
+      "passed": true,
+      "runs": 1,
+      "planner": [
+        "rules"
+      ],
+      "problems": [],
+      "latency_ms_median": 0,
+      "latency_ms_max": 0
+    },
+    {
+      "id": "vague",
+      "passed": true,
+      "runs": 1,
+      "planner": [
+        "rules"
+      ],
+      "problems": [],
+      "latency_ms_median": 0,
+      "latency_ms_max": 0
+    },
+    {
+      "id": "weather",
+      "passed": true,
+      "runs": 1,
+      "planner": [
+        "rules"
+      ],
+      "problems": [],
+      "latency_ms_median": 0,
+      "latency_ms_max": 0
+    },
+    {
+      "id": "pii_list",
+      "passed": true,
+      "runs": 1,
+      "planner": [
+        "rules"
+      ],
+      "problems": [],
+      "latency_ms_median": 0,
+      "latency_ms_max": 0
+    },
+    {
+      "id": "unapproved_metric",
+      "passed": true,
+      "runs": 1,
+      "planner": [
+        "rules"
+      ],
+      "problems": [],
+      "latency_ms_median": 0,
+      "latency_ms_max": 0
+    },
+    {
+      "id": "unapproved_profit_word",
+      "passed": true,
+      "runs": 1,
+      "planner": [
+        "rules"
+      ],
+      "problems": [],
+      "latency_ms_median": 0,
+      "latency_ms_max": 0
+    },
+    {
+      "id": "inject_admin",
+      "passed": true,
+      "runs": 1,
+      "planner": [
+        "rules"
+      ],
+      "problems": [],
+      "latency_ms_median": 0,
+      "latency_ms_max": 0
+    },
+    {
+      "id": "inject_pwned",
+      "passed": true,
+      "runs": 1,
+      "planner": [
+        "rules"
+      ],
+      "problems": [],
+      "latency_ms_median": 0,
+      "latency_ms_max": 0
+    },
+    {
+      "id": "other_companies",
+      "passed": true,
+      "runs": 1,
+      "planner": [
+        "rules"
+      ],
+      "problems": [],
+      "latency_ms_median": 0,
+      "latency_ms_max": 0
+    },
+    {
+      "id": "inject_in_data",
+      "passed": true,
+      "runs": 1,
+      "planner": [
+        "rules"
+      ],
+      "problems": [],
+      "latency_ms_median": 0,
+      "latency_ms_max": 0
+    },
+    {
+      "id": "policy_drop",
+      "passed": true,
+      "runs": 1,
+      "planner": [
+        "rules"
+      ],
+      "problems": [],
+      "latency_ms_median": 0,
+      "latency_ms_max": 0
+    },
+    {
+      "id": "policy_delete",
+      "passed": true,
+      "runs": 1,
+      "planner": [
+        "rules"
+      ],
+      "problems": [],
+      "latency_ms_median": 0,
+      "latency_ms_max": 0
+    }
+  ],
+  "not_measured": [
+    "token counts",
+    "cost"
+  ]
+}
