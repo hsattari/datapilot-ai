@@ -47,7 +47,7 @@ def build_model(db: Session, tenant_id: str, d: m.Dataset, role: str, mapping: d
     scalar = lambda sql: get_backend().scalar(tenant_id, sql)  # noqa: E731
     if role == "fact_sales":
         result = get_backend().build_fact_sales(tenant_id, d.table_name, mapping, d.id, replace_existing)
-        checks = quality.model_checks(result, mapping, scalar)
+        checks = quality.model_checks(result, mapping, scalar, cfg=quality.rules_for(db.get(m.Tenant, tenant_id)))
     else:
         result = get_backend().build_dimension(tenant_id, d.table_name, role, mapping)
         checks = quality.dimension_checks(result)

@@ -12,7 +12,12 @@ from ..observability import tracer
 from ..models import AuditEvent, Dataset, IngestionJob, SourceFile
 from .backends import get_backend
 from .modelling import auto_model
-from .quality import profile_checks, record_schema_version, store_results
+from .quality import profile_checks, record_schema_version, rules_for, store_results
+
+
+def quality_rules_for(db, tenant_id):
+    from .. import models as _m
+    return rules_for(db.get(_m.Tenant, tenant_id))
 from .profiling import parse_file, profile_frame, suggest_dimension, suggest_mapping
 from .storage import get_storage
 
@@ -57,7 +62,7 @@ def _process_job(db: Session, job_id: str) -> IngestionJob:
             db.add(ds)
             db.flush()
             drift = record_schema_version(db, ds, f.source_id, prof)
-            store_results(db, job.tenant_id, ds.id, "profile", profile_checks(prof, drift))
+            store_results(db, job.tenant_id, ds.id, "profile", profile_checks(prof, drift, quality_rules_for(db, job.tenant_id)))
             auto_model(db, job.tenant_id, ds)
             total += prof["row_count"]
         job.rows_loaded, job.status = total, "succeeded"

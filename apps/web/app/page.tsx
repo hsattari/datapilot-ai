@@ -840,6 +840,30 @@ function Users() {
   </div>);
 }
 
+function QualityRules() {
+  const [f, setF] = useState<any>(null); const [msg, setMsg] = useState("");
+  useEffect(() => { api("/quality-rules").then(r => setF({ ...r.settings, note: r.note })).catch(e => setMsg(e.message)); }, []);
+  if (!f) return msg ? <div style={card} role="alert">{msg}</div> : null;
+  const pct = (k: string) => <input type="number" min={0} max={100} style={{ width: 80, display: "inline" }} aria-label={k}
+    value={Math.round(f[k] * 1000) / 10} onChange={e => setF({ ...f, [k]: Number(e.target.value) / 100 })} />;
+  const sev = (k: string) => <select aria-label={k} value={f[k]} onChange={e => setF({ ...f, [k]: e.target.value })}>
+    <option value="off">Do not check</option><option value="warn">Warn</option><option value="fail">Fail</option></select>;
+  const save = async () => {
+    try { const { note, ...body } = f; const r = await api("/quality-rules", { method: "PUT", body: JSON.stringify(body) }); setF({ ...r.settings, note }); setMsg("Saved."); }
+    catch (e: any) { setMsg(e.message); }
+  };
+  return (<div style={card} data-testid="quality-rules">
+    <h3 style={{ marginTop: 0 }}>Data-quality limits</h3>
+    <p>A column blank in more than {pct("null_warn")} % of rows gets a warning, and above {pct("null_fail")} % a failure.</p>
+    <p>If more than {pct("reject_fail")} % of rows are quarantined, the file fails.</p>
+    <p>Latest order older than <input type="number" min={1} max={3650} style={{ width: 80, display: "inline" }} aria-label="stale_days" value={f.stale_days}
+      onChange={e => setF({ ...f, stale_days: Number(e.target.value) })} /> days is flagged as stale.</p>
+    <p>Negative sales (refunds): {sev("negative_sales")} &nbsp; Repeated order IDs: {sev("duplicate_order_ids")}</p>
+    <button onClick={save}>Save limits</button> {msg && <span role="status">{msg}</span>}
+    <small style={{ display: "block", marginTop: 6 }}>{f.note}</small>
+  </div>);
+}
+
 function YourData() {
   const [raw, setRaw] = useState(false);
   const [msg, setMsg] = useState("");
@@ -899,7 +923,7 @@ function Settings() {
       Require two-step sign-in for everyone in this organisation</label>
     <p style={{ margin: "0 0 8px", fontSize: 13 }}>People who have not set it up can only reach the set-up screen until they do. You must have it on for your own account first. People who sign in through a company identity provider use that provider's own checks.</p>
     <button onClick={save} disabled={!loaded || role !== "admin"}>Save settings</button> {msg && <span role="status">{msg}</span>}
-  </div>{role === "admin" && <YourData />}</>);
+  </div>{role === "admin" && <QualityRules />}{role === "admin" && <YourData />}</>);
 }
 
 export default function Page() {

@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from .. import models as m
 from ..db import get_db
 from ..deps import Principal, get_principal, require_admin, require_writer
-from ..services import insights
+from ..services import insights, quality
 from ..services import quotas
 from ..services.alerts import evaluate_alert
 from ..services.common import audit, owned, run_plan
@@ -245,3 +245,24 @@ def update_settings(body: SettingsIn, p: Principal = Depends(require_admin), db:
     db.commit()
     return {"name": t.name, "currency": t.currency, "timezone": t.timezone, "auto_model": t.auto_model,
             "require_mfa": t.require_mfa}
+
+
+# ---------------------------------------------------------------- data-quality thresholds
+@router.get("/quality-rules")
+def get_quality_rules(p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+    return {"settings": quality.rules_for(db.get(m.Tenant, p.tenant_id)), "defaults": quality.DEFAULTS,
+            "note": "Changes apply to files and models built from now on; earlier results are not recalculated."}
+
+
+@router.put("/quality-rules")
+def put_quality_rules(body: dict, p: Principal = Depends(require_admin), db: Session = Depends(get_db)):
+    try:
+        cfg = quality.validate_rules(body)
+    except quality.RulesInvalid as e:
+        raise HTTPException(422, str(e)) from None
+    t = db.get(m.Tenant, p.tenant_id)
+    old = quality.rules_for(t)
+    t.quality_settings = cfg
+    audit(db, p, "quality_rules.updated", changed={k: [old[k], cfg[k]] for k in cfg if old[k] != cfg[k]})
+    db.commit()
+    return {"settings": cfg}

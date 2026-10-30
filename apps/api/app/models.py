@@ -27,6 +27,7 @@ class Tenant(Base):
     auto_model: Mapped[bool] = mapped_column(Boolean, default=True, server_default=sa.true())
     # Organisation policy: everyone with a password sign-in must use two-step verification (SSO accounts rely on the IdP).
     require_mfa: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sa.false())
+    quality_settings: Mapped[dict | None] = mapped_column(JSON, nullable=True)   # thresholds, see services/quality.py
     plan: Mapped[str] = mapped_column(String(20), default="starter", server_default="starter")  # set by the service owner
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
