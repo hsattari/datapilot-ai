@@ -137,7 +137,9 @@ if live and reasons:
           "BadRequestError = the request itself was refused (check the deployment supports JSON mode and the API version).")
 print("(Cases answered by 'rules' without a reason are the hard policy checks that run before the model on purpose.)")
 
-if args.record:
+if args.record and live and reasons:
+    print("NOT RECORDED: the live model failed, so this run does not measure it. Fix the cause above and run again.")
+elif args.record:
     try:
         sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True, timeout=10).stdout.strip() or "unknown"
     except Exception:  # noqa: BLE001
