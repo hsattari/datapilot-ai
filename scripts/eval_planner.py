@@ -4,7 +4,7 @@
     python scripts/eval_planner.py --rules         # baseline: the built-in rule planner only (no model, no .env)
     python scripts/eval_planner.py --repeat 3      # run every case 3 times to expose non-determinism
     python scripts/eval_planner.py --only margin_percent,forecast
-    python scripts/eval_planner.py --record docs/evaluations     # also save a result file for this release (see below)
+    python scripts/eval_planner.py --record                       # also save a result file for this release (see below)
 
 --record DIR writes DIR/<UTC time>-<git commit>-<rules|live>.json with the commit, mode, deployment name (never keys), how many
 times each case ran, per-case pass/fail, which planner answered, and latency (median and slowest, in milliseconds), then
@@ -33,9 +33,12 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--rules", action="store_true", help="ignore Azure settings and use the rule planner only")
 ap.add_argument("--repeat", type=int, default=1)
 ap.add_argument("--only", default="")
-ap.add_argument("--record", default="", help="directory for the result file")
+ap.add_argument("--record", nargs="?", const=str(ROOT / "docs" / "evaluations"), default="",
+                help="save a result file; optional directory (default: docs/evaluations in the repo)")
 ap.add_argument("--cases", default=str(ROOT / "tests" / "ai_evaluation" / "planner_cases.json"))
 args = ap.parse_args()
+if args.record and args.only:
+    ap.error("--record needs the full case set; do not combine it with --only")
 
 from app.config import get_settings  # noqa: E402  (reads .env from the current directory)
 from app.services import planner  # noqa: E402
