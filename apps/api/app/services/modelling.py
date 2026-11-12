@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from .. import models as m
 from .backends import get_backend
 from .dimensions import DIMS, mapping_columns
-from . import quality, semantic
+from . import quality, semantic, starters
 
 AUTO_DIMENSION_CONFIDENCE = 0.8
 
@@ -120,3 +120,10 @@ def auto_model(db: Session, tenant_id: str, d: m.Dataset) -> None:
     except Exception as e:  # noqa: BLE001 - a failed automatic build must never fail the upload
         d.model_status = "proposed"
         d.profile = {**d.profile, "auto": {"status": "needs_review", "reason": str(e)[:300]}}
+        return
+    if role == "fact_sales":
+        try:
+            with db.begin_nested():
+                starters.create_once(db, tenant_id)
+        except Exception:  # noqa: BLE001 - starter content is a convenience, never a reason to fail
+            pass

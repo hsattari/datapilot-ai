@@ -157,8 +157,8 @@ def test_weekly_run_creates_last_weeks_summary_once(client):
     with SessionLocal() as db:
         assert summaries.run_weekly(db, next_week) == 1
         assert summaries.run_weekly(db, next_week) == 0                      # already there
-    rows = client.get("/api/v1/summaries", headers=h).json()
-    assert len(rows) == 1 and rows[0]["kind"] == "weekly"
+    rows = [x for x in client.get("/api/v1/summaries", headers=h).json() if x["kind"] == "weekly"]   # (starters may add an on-demand one)
+    assert len(rows) == 1
     start = date.fromisoformat(rows[0]["period_start"])
     assert start.weekday() == 0 and (date.fromisoformat(rows[0]["period_end"]) - start).days == 6
     full = client.get(f"/api/v1/summaries/{rows[0]['id']}", headers=h).json()

@@ -61,8 +61,12 @@ def for_metric(e: dict, data_problem: bool) -> list[dict]:
         steps = []
         if top and share is not None and share >= CONCENTRATED:
             dim, r = top
-            ev.append(f"{dim.capitalize()} '{r['member']}' accounts for {share:.0f}% of the change "
-                      f"({r['previous']:,.2f} to {r['current']:,.2f}).")
+            if share > 100:   # this group moved by more than the total: other groups moved the opposite way
+                ev.append(f"{dim.capitalize()} '{r['member']}' moved from {r['previous']:,.2f} to {r['current']:,.2f} "
+                          f"({r['change']:+,.2f}), more than the total change; other {dim} groups moved the other way and offset part of it.")
+            else:
+                ev.append(f"{dim.capitalize()} '{r['member']}' accounts for {share:.0f}% of the change "
+                          f"({r['previous']:,.2f} to {r['current']:,.2f}).")
             steps.append(f"Compare {dim} '{r['member']}' between {prev} and {cur}: orders, prices, quantities.")
             steps.append(f"Ask whoever looks after {dim} '{r['member']}' whether something changed "
                          f"(stock, price, a lost or won {'customer' if dim == 'customer' else 'deal'}, a promotion, the season).")

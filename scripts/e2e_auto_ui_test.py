@@ -93,6 +93,11 @@ with sync_playwright() as p:
     print("OK an address on a private network is refused in the browser")
     # dashboards: one click builds an overview of approved metrics, tiles are calculated live
     page.get_by_role("button", name="Dashboards").click()
+    expect(page.get_by_test_id("dashboard-view")).to_contain_text("Net Revenue", timeout=15000)   # exists with no click: starter content
+    page.get_by_role("button", name="Reports").click()
+    expect(page.get_by_text("Net revenue by month").first).to_be_visible(timeout=10000)
+    print("OK after the first upload an Overview dashboard and starter reports exist with no clicks")
+    page.get_by_role("button", name="Dashboards").click()
     page.get_by_role("button", name="Create overview from approved metrics").click()
     view = page.get_by_test_id("dashboard-view")
     expect(view).to_contain_text("Net Revenue", timeout=15000)

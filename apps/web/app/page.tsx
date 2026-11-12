@@ -79,7 +79,7 @@ function Spark({ rows }: { rows: [string, number][] }) {
   if (rows.length < 2) return null;
   const vals = rows.map(r => Number(r[1])), max = Math.max(...vals), min = Math.min(...vals, 0);
   const pts = vals.map((v, i) => `${(i / (vals.length - 1)) * 300},${60 - ((v - min) / (max - min || 1)) * 55}`).join(" ");
-  return <svg width={300} height={64} role="img" aria-label="trend by month"><polyline fill="none" stroke="#2563eb" strokeWidth={2} points={pts} /></svg>;
+  return <svg viewBox="0 0 300 64" preserveAspectRatio="none" style={{ width: "100%", maxWidth: 300, height: 64 }} role="img" aria-label="trend by month"><polyline fill="none" stroke="#2563eb" strokeWidth={2} vectorEffect="non-scaling-stroke" points={pts} /></svg>;
 }
 
 const FACT_FIELDS: [string, string][] = [
