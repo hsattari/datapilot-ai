@@ -4,6 +4,7 @@ Tenant isolation: separate file per tenant, read-only connections for queries.
 The Databricks/Fabric profiles implement the same interface (see connectors/).
 """
 import re
+import time
 from pathlib import Path
 
 import duckdb
@@ -24,7 +25,17 @@ def _path(tenant_id: str) -> Path:
 
 
 def writer(tenant_id: str) -> duckdb.DuckDBPyConnection:
-    return duckdb.connect(str(_path(tenant_id)))
+    """Open the tenant file for writing. DuckDB refuses a write connection while a read-only one is open in this
+    process (another request answering a question) or while another process holds the file; both are brief, so
+    retry for a few seconds before giving up."""
+    path, last = str(_path(tenant_id)), None
+    for _ in range(20):
+        try:
+            return duckdb.connect(path)
+        except (duckdb.ConnectionException, duckdb.IOException) as e:
+            last = e
+            time.sleep(0.25)
+    raise last
 
 
 def reader(tenant_id: str) -> duckdb.DuckDBPyConnection:
@@ -152,6 +163,32 @@ def build_dimension(tenant_id: str, bronze_table: str, role: str, mapping: dict[
     finally:
         con.close()
     return {"rows_loaded": loaded, "rows_rejected": rejected, "attribute_missing_rows": no_attr, "role": role}
+
+
+def remove_dataset(tenant_id: str, bronze_table: str, dataset_id: str, role: str | None) -> dict:
+    """Take one uploaded dataset out of the analytical store: drop its bronze table, and for a sales file remove
+    its rows from silver/quarantine and rebuild fact_sales from what is left. Orders that this file REPLACED in an
+    earlier file are not brought back (upload that earlier file again if you need them). For a product/customer
+    list the modelled table is dropped; the caller rebuilds it from another approved list if one remains."""
+    bronze_table = ident(bronze_table)
+    con = writer(tenant_id)
+    removed = 0
+    try:
+        have = {r[0] for r in con.execute("SELECT table_name FROM information_schema.tables").fetchall()}
+        con.execute(f'DROP TABLE IF EXISTS "{bronze_table}"')
+        if role == "fact_sales" and "silver_sales" in have:
+            removed = con.execute("SELECT count(*) FROM silver_sales WHERE dataset_id = ?", [dataset_id]).fetchone()[0]
+            con.execute("DELETE FROM silver_sales WHERE dataset_id = ?", [dataset_id])
+            if "quarantine_sales" in have:
+                con.execute("DELETE FROM quarantine_sales WHERE dataset_id = ?", [dataset_id])
+            con.execute(f"CREATE OR REPLACE TABLE fact_sales AS SELECT {_FACT_COLS} FROM silver_sales")
+        elif role in DIMS:
+            t = DIMS[role]["table"]
+            con.execute(f"DROP TABLE IF EXISTS {t}")
+            con.execute(f"DROP TABLE IF EXISTS quarantine_{t}")
+    finally:
+        con.close()
+    return {"sales_rows_removed": removed}
 
 
 def list_tables(tenant_id: str) -> set[str]:

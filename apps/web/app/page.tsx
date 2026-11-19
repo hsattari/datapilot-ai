@@ -176,8 +176,9 @@ const STATE_LABEL: Record<string, [string, string]> = {
 };
 
 /** Data-source health: latest upload state, and how often a new file is expected (so a missing file is noticed). */
-function SourceHealth() {
+function SourceHealth({ canDelete = false, onDeleted = () => {} }: { canDelete?: boolean; onDeleted?: () => void }) {
   const [rows, setRows] = useState<any[]>([]);
+  const [confirm, setConfirm] = useState("");
   const [days, setDays] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState("");
   const load = useCallback(() => api("/health").then(r => {
@@ -188,10 +189,15 @@ function SourceHealth() {
     try { await api(`/data-sources/${id}`, { method: "PATCH", body: JSON.stringify({ expected_every_days: days[id] ? Number(days[id]) : 0 }) }); setMsg("Saved."); await load(); }
     catch (e: any) { setMsg(e.message); }
   };
-  if (!rows.length) return null;
+  const remove = async (id: string, name: string) => {
+    try { const r = await api(`/data-sources/${id}`, { method: "DELETE" }); setConfirm("");
+      setMsg(`Deleted ${name}: ${r.files} file(s) and ${r.sales_rows_removed} sales row(s) removed.`); await load(); onDeleted(); }
+    catch (e: any) { setConfirm(""); setMsg(e.message); }
+  };
+  if (!rows.length) return msg ? <div style={card}><small role="status">{msg}</small></div> : null;
   return (<div style={card} data-testid="source-health">
     <h3 style={{ marginTop: 0 }}>Source health</h3>
-    <table><thead><tr><th>Source</th><th>State</th><th>Last upload</th><th>Expect a new file every</th></tr></thead>
+    <table><thead><tr><th>Source</th><th>State</th><th>Last upload</th><th>Expect a new file every</th>{canDelete && <th></th>}</tr></thead>
       <tbody>{rows.map(r => { const [label, colour] = STATE_LABEL[r.state] || [r.state, "#444"]; return (
         <tr key={r.id} data-source={r.name}>
           <td>{r.name}</td>
@@ -199,6 +205,10 @@ function SourceHealth() {
           <td>{r.last_upload_at ? new Date(r.last_upload_at).toLocaleString() : "-"}</td>
           <td><input type="number" min={0} max={365} placeholder="days" aria-label={`Days between files for ${r.name}`} style={{ width: 70, display: "inline" }}
             value={days[r.id] ?? ""} onChange={e => setDays(d => ({ ...d, [r.id]: e.target.value }))} /> days <button onClick={() => save(r.id)}>Save</button></td>
+          {canDelete && <td>{confirm === r.id
+            ? <><small style={{ display: "block", maxWidth: 260 }}>Deletes this source, its uploaded files and the tables built from them. Cannot be undone.</small>
+                <button onClick={() => remove(r.id, r.name)} style={{ background: "#b00020" }}>Confirm delete</button> <button onClick={() => setConfirm("")}>Cancel</button></>
+            : <button aria-label={`Delete ${r.name}`} onClick={() => setConfirm(r.id)} style={{ background: "#6b7280" }}>Delete</button>}</td>}
         </tr>); })}</tbody></table>
     {msg && <small role="status">{msg}</small>}
     <small style={{ display: "block", marginTop: 6 }}>If nothing arrives within that time the source is shown as Late. Leave blank to switch the check off.</small>
@@ -373,7 +383,7 @@ function Sources() {
     catch (e: any) { setMsg(e.message); setNote(`Not saved: ${e.message}`); }
   };
   return (<>
-    <SourceHealth key={results.map(r => r.status).join("|") + reload} />
+    <SourceHealth key={results.map(r => r.status).join("|") + reload} canDelete={isWriter} onDeleted={() => { refresh().catch(() => {}); }} />
     {isWriter && <WebConnections onChange={() => { setReload(x => x + 1); refresh().catch(() => {}); }} />}
     <div style={card}>
       <input type="file" multiple accept=".csv,.xlsx,.txt,.json,.jsonl,.xml" aria-label="Choose files to upload"

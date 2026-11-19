@@ -31,6 +31,7 @@ class Backend(Protocol):
     def tables(self, tenant_id: str) -> set[str]: ...
     def export_table(self, tenant_id: str, table: str) -> tuple[list[str], list[tuple]]: ...
     def drop_tenant(self, tenant_id: str) -> int: ...
+    def remove_dataset(self, tenant_id: str, bronze_table: str, dataset_id: str, role: str | None) -> dict: ...
     def query(self, tenant_id: str, sql: str, params: list) -> tuple[list[str], list[list]]: ...
     def scalar(self, tenant_id: str, sql: str) -> Any: ...
 
@@ -64,6 +65,9 @@ class DuckDBBackend:
 
     def drop_tenant(self, tenant_id):
         return duck.drop_tenant(tenant_id)
+
+    def remove_dataset(self, tenant_id, bronze_table, dataset_id, role):
+        return duck.remove_dataset(tenant_id, bronze_table, dataset_id, role)
 
     def query(self, tenant_id, sql, params):
         s = get_settings()
@@ -265,6 +269,32 @@ class DatabricksBackend:
         with self._connect(tenant_id, True) as conn, conn.cursor() as cur:
             self._exec(cur, f"DROP SCHEMA IF EXISTS {schema} CASCADE")
         return 1
+
+    def remove_dataset(self, tenant_id, bronze_table, dataset_id, role):
+        """Same semantics as the DuckDB engine. Mock-tested only (see class note)."""
+        bronze_table = _ident(bronze_table)
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", dataset_id):
+            raise ValueError("Unsafe dataset id")
+        schema, removed = self.schema(tenant_id), 0
+        with self._connect(tenant_id, True) as conn, conn.cursor() as cur:
+            self._exec(cur, f"USE SCHEMA {schema}")
+            self._exec(cur, f"DROP TABLE IF EXISTS {bronze_table}")
+            if role == "fact_sales":
+                self._exec(cur, "SHOW TABLES")
+                have = {r[1] for r in cur.fetchall()}
+                if "silver_sales" in have:
+                    self._exec(cur, f"SELECT count(*) FROM silver_sales WHERE dataset_id = '{dataset_id}'")
+                    removed = cur.fetchone()[0]
+                    self._exec(cur, f"DELETE FROM silver_sales WHERE dataset_id = '{dataset_id}'")
+                    if "quarantine_sales" in have:
+                        self._exec(cur, f"DELETE FROM quarantine_sales WHERE dataset_id = '{dataset_id}'")
+                    cols = "order_id, order_date, net_sales, cost_of_goods_sold, product, region, customer"
+                    self._exec(cur, f"CREATE OR REPLACE TABLE fact_sales AS SELECT {cols} FROM silver_sales")
+            elif role in DIMS:
+                t = DIMS[role]["table"]
+                self._exec(cur, f"DROP TABLE IF EXISTS {t}")
+                self._exec(cur, f"DROP TABLE IF EXISTS quarantine_{t}")
+        return {"sales_rows_removed": removed}
 
     def query(self, tenant_id, sql, params):
         named_sql, named = self.to_named(sql, params)

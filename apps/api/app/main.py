@@ -27,7 +27,7 @@ from .schemas import ApproveIn, QuestionIn, RegisterIn, SourceIn
 from .security import create_token, hash_password
 from .services.backends import get_backend
 from .services.common import audit, owned, preview_plan, run_plan
-from .services import answering, insights, modelling, quality, quotas, semantic
+from .services import answering, insights, modelling, quality, quotas, semantic, sources
 from .services.planner import make_plan
 from .services.query_engine import QueryRejected
 from .services.storage import get_storage, safe_filename
@@ -177,6 +177,21 @@ def list_data_sources(p: Principal = Depends(get_principal), db: Session = Depen
         out.append({"id": s_.id, "name": s_.name, "kind": s_.kind, "files": len(files), "last_file": last,
                     "expected_every_days": s_.expected_every_days})
     return out
+
+
+@app.delete("/api/v1/data-sources/{source_id}")
+def delete_data_source(source_id: str, p: Principal = Depends(require_writer), db: Session = Depends(get_db)):
+    """Delete a source with its uploaded files and the tables built from them. Metrics, reports and dashboards stay
+    (they are recalculated from what is left). Orders this source replaced in an earlier file are not restored."""
+    s_ = owned(db, m.DataSource, source_id, p.tenant_id)
+    name = s_.name
+    try:
+        counts = sources.delete_source(db, p.tenant_id, source_id)
+    except sources.SourceBusy:
+        raise HTTPException(409, "This source is still being processed. Try again in a minute.")
+    audit(db, p, "source.deleted", name=name, **counts)
+    db.commit()
+    return {"deleted": True, **counts}
 
 
 @app.get("/api/v1/jobs/{job_id}")
