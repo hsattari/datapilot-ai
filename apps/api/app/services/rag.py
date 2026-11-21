@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..models import Document, DocumentChunk
+from . import aibudget
 from .embeddings import embed_texts, tokens
 
 CHUNK_CHARS = 1200
@@ -48,6 +49,7 @@ def index_document(db: Session, tenant_id: str, user_id: str, title: str, body: 
     chunks = chunk_text(body)
     if not chunks:
         raise ValueError("Document has no text content")
+    aibudget.bind(tenant_id)
     vectors, mode = embed_texts(chunks)  # may raise; nothing is stored in that case
     doc = Document(tenant_id=tenant_id, title=title[:300], filename=filename,
                    sha256=hashlib.sha256(body.encode()).hexdigest(), chunk_count=len(chunks),
@@ -120,6 +122,7 @@ def search(db: Session, tenant_id: str, query: str, k: int = 5) -> list[dict]:
     if not docs:
         return []
     modes = {d.embedding_mode for d in docs.values()}
+    aibudget.bind(tenant_id)
     current_mode = embed_texts(["x"])[1] if len(modes) else None
     rows = list(db.scalars(select(DocumentChunk).where(DocumentChunk.tenant_id == tenant_id)))
     # Only compare vectors produced by the same embedding mode as the query.

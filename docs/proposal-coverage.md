@@ -14,7 +14,7 @@ Status words, used strictly:
 
 | Module | Status | Detail |
 |---|---|---|
-| Onboarding and workspaces | Partial | Registration, organisation name, currency, time zone, users, roles: **Tested**. Not built: business description, consent capture, subscription limits, separate workspaces inside one organisation |
+| Onboarding and workspaces | Partial | Registration, organisation name, currency, time zone, users, roles, **business description** (at sign-up and in Settings, never copied into the audit trail) and **consent capture** (terms/privacy version and time per person; `REQUIRE_CONSENT=true` makes sign-up refuse without it; `GET/POST /consent`): **Tested locally**. Plan limits exist (placeholders). Not built: separate workspaces inside one organisation; a re-consent prompt when `TERMS_VERSION` changes (the API reports `up_to_date`, the web app does not yet block on it) |
 | Source management | Partial | CSV, XLSX, TXT, JSON, JSONL: **Tested** locally. In Azure the web app opens and works (owner), the storage layer was checked directly, but an upload through ClamAV and the worker has **not yet been confirmed** since the Azure Files fix. XML upload: **Tested** (hardened parser, see below). **Web address connector**: a public https file fetched on demand (`POST /data-sources/{id}/sync`, "Fetch now") or every N hours by the worker, through the same validation, malware scan, quotas and ingestion as an upload; an unchanged file (same checksum) is skipped; failures show in Source health: **Tested** with a mocked network only, **not run against a real website**. Not built: connectors that need credentials (OAuth, API keys, bearer tokens: needs a per-organisation secret store), paginated REST APIs and cursors, database connectors. Schema history: **Tested** |
 | Automated data engineering | Partial | Schema inference, profiling, mapping suggestions with confidence, quarantine, reconciled counts, retries with backoff, quality checks: **Tested**; administrators can change the thresholds (blank-value warn/fail limits, quarantine limit, stale-after days, and warn/fail/off for negative sales and repeated order IDs) under Settings > Data-quality limits, validated, audited, applied to files and models built afterwards (earlier results are not recalculated): **Tested** (API + browser). Not built: customer-written rules, per-column rules. Sales files accumulate with upsert by order ID (latest file wins, reported): **Tested**. Lineage view: see section 17-18. Not built: watermarks / API cursors / CDC, snapshots |
 | Business intelligence | Partial | Home dashboard tiles, monthly trend, automatic insights and anomaly flag, "why did it change" driver analysis, saved reports: **Tested**. **Dashboards** page: saved dashboards of up to 12 tiles (approved metrics with trend, saved reports, change explanations), an overview created in one click, created automatically once, together with starter saved reports (net revenue by month, product and region, and why it changed) and a management summary, when an organisation's first sales file is modelled (deleted starters are not recreated); every tile recalculated through the same approval gate each time it is opened (a tile whose metric was withdrawn says so instead of showing a stale number), up to 20 per organisation, included in the organisation export: **Tested** (API + browser). Not built: industry templates other than retail, drag-and-drop layout, scheduled report delivery |
@@ -29,7 +29,7 @@ Status words, used strictly:
 |---|---|---|
 | Next.js + FastAPI + PostgreSQL + ADLS Gen2 | **Verified** | Running in Azure Container Apps; ADLS and PostgreSQL checked by `scripts/test_azure_resources.py` |
 | Starter profile (DuckDB) | Tested | One file per tenant on an Azure Files share in Azure. SMB has no byte-range locks; worker and API open the file one after the other. Not load-tested |
-| dbt Core retail template | **Verified** | `dbt build` 8/8 pass (dbt 1.12 + DuckDB), also in CI. Other warehouses not tested. Not built: snapshots, exposures |
+| dbt Core retail template | **Verified** | `dbt build` 8/8 pass (dbt 1.12 + DuckDB), also in CI. Other warehouses not tested. Snapshots (product and customer history) and exposures added and built locally (`dbt build` 23 pass) |
 | File validation, size/parser limits, checksum | Tested | XML: DOCTYPE and entity declarations are refused before parsing and again by the parser (XXE and entity-expansion attacks tested); depth, element and column caps |
 | Malware scanning of uploads | Tested | Against a **fake** ClamAV only; a real daemon has not been tried |
 | Bronze / Silver / Gold | Tested | |
@@ -41,13 +41,13 @@ Status words, used strictly:
 | Item | Status | Detail |
 |---|---|---|
 | Metric registry with approval gate, required-input check, version | Tested | Built-in metrics are now approved automatically when their columns exist (admin can switch off); custom metrics always need an administrator |
-| Owner, unit, default filters, effective date, example questions, `metric_dimensions` | Partial | Name, description, expression, aggregation, status, version, allowed dimensions exist. **Owner, unit and example questions** are now stored and editable by administrators (Business Metrics > Edit details) without changing the definition, version or approval: **Tested**. Not stored: default filters, effective date, a separate `metric_dimensions` table |
+| Owner, unit, default filters, effective date, example questions, `metric_dimensions` | Built | Owner, unit, example questions (edit without changing the definition). **Default filters (up to 3, equality) and an effective date range** are part of the definition: `PUT /metrics/{name}/scope` (admin) raises the version and sets the metric back to needing approval; applied in the one query compiler, shown as a caveat and in provenance, built into the Power BI measure and the lineage trace: **Tested locally**. Not stored: a separate `metric_dimensions` table |
 
 ## 9. Power BI
 
 | Item | Status | Detail |
 |---|---|---|
-| Generated model + DAX | **Verified** | 350 / 3 / 140 in Power BI Desktop. Not built: dimension tables, date table with time intelligence measures (YTD, prior year), RLS/OLS, deployment pipelines |
+| Generated model + DAX | **Verified** | 350 / 3 / 140 in Power BI Desktop. The generator now also emits dimension tables with relationships, a date table, YTD / prior-year / year-on-year measures and a Region RLS role **template**: these additions are generated and unit-tested but **not yet opened in Power BI Desktop**. Not built: OLS, deployment pipelines |
 
 ## 10-13. AI, RAG, MCP, evaluation
 
@@ -84,7 +84,7 @@ Ask Your Data is now a chat (follow-ups, history, feedback, CSV download). Dashb
 | Log redaction | Tested | |
 | CSV formula injection | Tested | |
 | SSRF protection | Tested | `services/netguard.py`: https on 443 only, no credentials in the address, local-style names refused, every resolved address must be public (private, loopback, link-local/metadata, CGNAT, multicast, IPv4-in-IPv6 all refused), connection pinned to the checked address (DNS rebinding), redirects followed by hand (max 3) and re-checked each hop, proxy settings ignored, size cap on the decoded body, time limit; query strings (pre-signed tokens) kept out of audit and HTTP logs. Mocked DNS and HTTP in tests; not penetration-tested. Egress filtering at the network level (Terraform/NSG) is still advisable and not built |
-| Field-level restrictions and data classification | Not built | Only a refusal rule for salary/payroll questions exists |
+| Field-level restrictions and data classification | Built | Each field (product, region, customer, category, segment) and each metric can be public, internal, confidential (analyst and above) or restricted (admin only), set in Settings or `PUT /classification`; enforced where every query is compiled, so chat, reports, dashboards, alerts and previews follow it: **Tested locally**. Not built: column-level masking inside uploaded raw files, or per-person exceptions; the salary/payroll refusal rule remains |
 | Export, deletion, erasure, retention | Tested | ADLS/Databricks deletion paths not run against real services; backups outside this control |
 | DPIA, privacy notice, DPAs, subprocessor and transfer assessments | Not built | Needs the owner and legal/privacy advice. Not something code can supply |
 
@@ -94,8 +94,8 @@ Ask Your Data is now a chat (follow-ups, history, feedback, CSV download). Dashb
 |---|---|---|
 | Observability (request IDs, JSON logs, spans) | Tested | Not checked against a real Application Insights resource |
 | Terraform for the data layer and hosting | **Verified** | Applied by the owner. Missing: private networking, custom domain, WAF |
-| CI | Tested | GitHub Actions: api, web, PostgreSQL + pgvector, dbt. Not built: image scanning, staging smoke tests, separate dev/test/staging/prod environments |
-| Runbook, rollback, incident response | Partial | `docs/operations/runbook.md`; `docs/operations/incident-response.md` is a **starter outline** (not legal advice; contacts table is blank for the owner to fill). No tested image rollback procedure or incident drill |
+| CI | Tested | GitHub Actions: api, web, PostgreSQL + pgvector, dbt, and (new) **image build + Trivy scan** (fails on fixable CRITICAL/HIGH) and a manual **smoke-test** workflow (`scripts/smoke_test.py`: sign up, upload the reference file, net revenue 350 / gross profit 140, delete). Separate environments: Terraform workspaces and `environments/*.tfvars`, with promotion steps in `docs/operations/environments.md`. **Not run yet in GitHub or Azure**: the scan job and the smoke test are untested until you run them; no staging environment exists yet |
+| Runbook, rollback, incident response | Partial | `docs/operations/runbook.md`; `docs/operations/incident-response.md` is a **starter outline** (not legal advice; contacts table blank for the owner). **New:** `rollback.md` (application, database, storage) and `incident-drill.md` (three drills with a record table). Written, **not yet drilled**: run Drill A in staging and record the time |
 | Tiers, quotas, per-tenant limits | Tested | Plan per organisation (starter / growth / advanced / enterprise) with limits on uploads, rows loaded, questions per day, people and documents; 429 with a clear message at the limit, warning from 80%, shown in Usage and on Home. The numbers are **placeholders, not validated pricing**; the plan is set by the service owner (no customer endpoint). Not built: AI token and embedding budgets, storage-size and compute-cost tracking, billing |
 | Lineage source -> model -> metric -> report/alert -> answer | Tested | `GET /lineage` (graph) and `GET /lineage/metrics/{name}` (column-by-column trace to the uploaded file with its checksum, the models built, definition and version, reports/alerts/answers that use it); shown under Business Metrics > Show lineage. Unmapped inputs are reported, never hidden. Not built: lineage for dashboards and for dbt model dependencies |
 
@@ -113,7 +113,7 @@ Ask Your Data is now a chat (follow-ups, history, feedback, CSV download). Dashb
 
 ## 24. Success metrics
 
-Not built: product analytics for activation, time to first dashboard, retention and cost to serve. Per-tenant usage counts exist.
+**Built:** `GET /analytics/product` (admin; Settings shows it) gives activation (uploaded, modelled, dashboard, asked), minutes to first upload/dashboard/answer, active people 7/30 days and per week, and cost to serve (questions, rows, AI tokens); `scripts/product_report.py` aggregates across organisations for the service owner. **Monthly AI token budgets** per plan (placeholder numbers) are counted from model responses; when used up the planner falls back to the built-in rules. Not built: billing or price per token. All **tested locally only**.
 
 ## Priorities for what is left
 

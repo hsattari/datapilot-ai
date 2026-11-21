@@ -61,15 +61,20 @@ class Plan(BaseModel):
         return v
 
 
-def _roles_needed(plan: Plan) -> list[str]:
-    names = list(plan.dimensions) + [f.field for f in plan.filters]
+def _roles_needed(plan: Plan, extra_fields: tuple[str, ...] = ()) -> list[str]:
+    names = list(plan.dimensions) + [f.field for f in plan.filters] + list(extra_fields)
     return [r for a, r in ATTR_TO_ROLE.items() if a in names]
 
 
 def compile_plan(plan: Plan, expression: str, aggregation: str, today: date | None = None,
-                 month_expr: str | None = None, available_tables: set[str] | None = None):
-    """Build SQL from a template; user-controlled values are bound parameters only."""
-    roles = _roles_needed(plan)
+                 month_expr: str | None = None, available_tables: set[str] | None = None,
+                 scope: dict | None = None):
+    """Build SQL from a template; user-controlled values are bound parameters only.
+    `scope` is the metric's own definition: default filters (equality, ANDed with the person's filters, so they
+    cannot be overridden) and an effective date range on order_date."""
+    scope = scope or {}
+    default_filters = [(f["field"], f["value"]) for f in scope.get("filters", []) if f.get("field") in FILTER_SQL]
+    roles = _roles_needed(plan, tuple(f for f, _ in default_filters))
     if available_tables is not None:
         for r in roles:
             if DIMS[r]["table"] not in available_tables:
@@ -92,6 +97,15 @@ def compile_plan(plan: Plan, expression: str, aggregation: str, today: date | No
     for f in plan.filters:
         where.append(f"{FILTER_SQL[f.field]} = ?")
         params.append(f.value)
+    for field, value in default_filters:
+        where.append(f"{FILTER_SQL[field]} = ?")
+        params.append(value)
+    if scope.get("effective_from"):
+        where.append("order_date >= ?")
+        params.append(str(scope["effective_from"]))
+    if scope.get("effective_to"):
+        where.append("order_date <= ?")
+        params.append(str(scope["effective_to"]))
     joins = "".join(f" LEFT JOIN {DIMS[r]['table']} {DIMS[r]['alias']} "
                     f"ON f.{DIMS[r]['fact_col']} = {DIMS[r]['alias']}.{DIMS[r]['key_col']}" for r in roles)
     sql = f"SELECT {', '.join(dims + [agg + ' AS value'])} FROM fact_sales f{joins}"

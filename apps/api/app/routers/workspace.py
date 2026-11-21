@@ -17,6 +17,7 @@ from ..deps import Principal, get_principal, require_admin, require_writer
 from ..services import insights, quality
 from ..services import quotas
 from ..services.alerts import evaluate_alert
+from ..services import aibudget
 from ..services.common import audit, owned, run_plan
 from ..services.planner import make_plan
 from ..services.query_engine import Plan, QueryRejected
@@ -36,6 +37,7 @@ def create_report(body: ReportIn, p: Principal = Depends(require_writer), db: Se
         m.Metric.tenant_id == p.tenant_id, m.Metric.status == "approved"))}
     unapproved = {x.name: x.description for x in db.scalars(select(m.Metric).where(
         m.Metric.tenant_id == p.tenant_id, m.Metric.status != "approved"))}
+    aibudget.bind(p.tenant_id)
     res = make_plan(body.question, approved, unapproved)
     if res.outcome == "explain":   # a "why did it change?" report: stored as a small spec, recomputed on every run
         try:
@@ -210,13 +212,14 @@ class SettingsIn(BaseModel):
     timezone: str | None = Field(default=None, max_length=64)
     auto_model: bool | None = None
     require_mfa: bool | None = None
+    business_description: str | None = Field(default=None, max_length=500)
 
 
 @router.get("/settings")
 def get_settings_(p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     t = db.get(m.Tenant, p.tenant_id)
     return {"name": t.name, "currency": t.currency, "timezone": t.timezone, "auto_model": t.auto_model,
-            "require_mfa": t.require_mfa, "your_role": p.role}
+            "require_mfa": t.require_mfa, "business_description": t.business_description or "", "your_role": p.role}
 
 
 @router.patch("/settings")
@@ -241,10 +244,13 @@ def update_settings(body: SettingsIn, p: Principal = Depends(require_admin), db:
             if not me_.mfa_enabled and not sso:
                 raise HTTPException(422, "Turn on two-step sign-in for your own account first, so you are not locked out")
         t.require_mfa = body.require_mfa
-    audit(db, p, "settings.updated", **body.model_dump(exclude_none=True))
+    if body.business_description is not None:
+        t.business_description = body.business_description.strip() or None
+    audit(db, p, "settings.updated", **body.model_dump(exclude_none=True, exclude={"business_description"}),
+          business_description_changed=body.business_description is not None)
     db.commit()
     return {"name": t.name, "currency": t.currency, "timezone": t.timezone, "auto_model": t.auto_model,
-            "require_mfa": t.require_mfa}
+            "require_mfa": t.require_mfa, "business_description": t.business_description or ""}
 
 
 # ---------------------------------------------------------------- data-quality thresholds

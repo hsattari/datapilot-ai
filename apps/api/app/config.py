@@ -75,6 +75,8 @@ class Settings(BaseSettings):
 
     # Plan given to new organisations (starter | growth | advanced | enterprise). Limits: app/services/quotas.py.
     default_plan: str = "starter"
+    require_consent: bool = False          # registration needs accept_terms=true when on
+    terms_version: str = "2026-11"         # bump when the terms or privacy notice change
 
     # Upload limits
     max_upload_mb: int = 25

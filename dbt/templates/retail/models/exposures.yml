@@ -1,0 +1,17 @@
+version: 2
+# What depends on these models. Update the URLs to your own deployment.
+exposures:
+  - name: datapilot_overview_dashboard
+    type: dashboard
+    maturity: medium
+    description: The Overview dashboard in DataPilot AI (net revenue, gross profit, orders and the starter reports).
+    url: https://example.invalid/replace-with-your-datapilot-url
+    owner: {name: Analytics owner, email: owner@example.invalid}
+    depends_on: [ref('fact_sales'), ref('dim_product'), ref('dim_customer')]
+  - name: datapilot_powerbi_semantic_model
+    type: analysis
+    maturity: low
+    description: Power BI semantic model generated from approved DataPilot metrics (GET /api/v1/export/powerbi).
+    url: https://example.invalid/replace-with-your-power-bi-workspace
+    owner: {name: Analytics owner, email: owner@example.invalid}
+    depends_on: [ref('fact_sales'), ref('dim_product'), ref('dim_customer')]

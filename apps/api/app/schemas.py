@@ -8,6 +8,8 @@ class RegisterIn(BaseModel):
     email: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
     password: str = Field(min_length=10, max_length=72)
     currency: str = "GBP"
+    business_description: str | None = Field(default=None, max_length=500)
+    accept_terms: bool = False       # agreement to the terms and privacy notice; required when REQUIRE_CONSENT is on
 
 
 class LoginIn(BaseModel):

@@ -37,6 +37,21 @@ jobs:
       - run: pip install -r apps/api/requirements.txt
       - name: Full suite on PostgreSQL + pgvector (schema built from migrations)
         run: cd apps/api && TEST_DATABASE_URL=postgresql+psycopg2://datapilot:datapilot@localhost:5432/datapilot python -m pytest -q
+  images:
+    # Build both images and fail on fixable CRITICAL/HIGH vulnerabilities (OS packages and Python/Node libraries).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build API image
+        run: docker build -f infrastructure/docker/api.Dockerfile -t datapilot-api:ci .
+      - name: Build web image
+        run: docker build -f infrastructure/docker/web.Dockerfile --build-arg API_URL=http://datapilot-api -t datapilot-web:ci .
+      - name: Scan API image
+        uses: aquasecurity/trivy-action@0.28.0
+        with: { image-ref: "datapilot-api:ci", severity: "CRITICAL,HIGH", ignore-unfixed: true, exit-code: "1", vuln-type: "os,library" }
+      - name: Scan web image
+        uses: aquasecurity/trivy-action@0.28.0
+        with: { image-ref: "datapilot-web:ci", severity: "CRITICAL,HIGH", ignore-unfixed: true, exit-code: "1", vuln-type: "os,library" }
   web:
     runs-on: ubuntu-latest
     steps:

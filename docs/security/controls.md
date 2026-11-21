@@ -45,3 +45,12 @@ DPIA and legal review (UK GDPR / DPA 2018), independent penetration test and adv
 ## Outbound fetches (web address connector)
 
 The server fetches addresses that customers enter, so `services/netguard.py` applies SSRF rules on every fetch and on every redirect hop: https on port 443 only; no credentials in the address; local-style host names refused; every resolved address must be public; the connection is made to the address that was checked (so DNS rebinding cannot swap it); proxy environment variables are ignored; the decoded body is size-capped and the fetch time-limited. Query strings (which may hold pre-signed tokens) are not written to audit events or HTTP logs. Residual risk: tested with mocked DNS and HTTP only; add network-level egress filtering when private networking is introduced. Credentials for sources are not supported until a per-organisation secret store is designed.
+
+
+## Data classification, consent and AI budget (added)
+- **Classification**: fields and metrics carry public / internal / confidential / restricted; the minimum role is checked in the single query compiler (`services/common._compile`), so no route can skip it. Changes are audited (`classification.updated`).
+- **Consent**: the terms/privacy version and time are stored per person; the audit trail records the version only.
+- **Business description**: stored on the organisation; its text is never written to the audit trail (only a "changed" flag).
+- **AI token budget**: counts tokens per organisation per month (no content). Exhausted budget: rules-only planning, never an error or an overspend.
+- **Metric scope changes** are definition changes: version bump, back to unapproved, audited (`metric.scope_changed`).
+- **Image scanning**: Trivy in CI fails the build on fixable CRITICAL/HIGH findings.

@@ -84,6 +84,10 @@ def metric_trace(db: Session, tenant_id: str, name: str) -> dict | None:
     reports = [r for r in db.scalars(select(m.Report).where(m.Report.tenant_id == tenant_id).order_by(m.Report.created_at))
               if (r.plan or {}).get("metric") == name]
     alerts = list(db.scalars(select(m.Alert).where(m.Alert.tenant_id == tenant_id, m.Alert.metric == name)))
+    report_ids = {r.id for r in reports}
+    dashboards = [d for d in db.scalars(select(m.Dashboard).where(m.Dashboard.tenant_id == tenant_id).order_by(m.Dashboard.created_at))
+                  if any((t.get("kind") == "metric" and t.get("metric") == name) or
+                         (t.get("kind") == "report" and t.get("report_id") in report_ids) for t in d.tiles or [])]
     since = datetime.now(timezone.utc) - timedelta(days=30)
     answers = 0
     for q in db.scalars(select(m.AnalyticalQuery).where(m.AnalyticalQuery.tenant_id == tenant_id,
@@ -96,10 +100,14 @@ def metric_trace(db: Session, tenant_id: str, name: str) -> dict | None:
     return {
         "metric": {"name": metric.name, "label": metric.label, "description": metric.description,
                    "expression": metric.expression, "aggregation": metric.aggregation, "status": metric.status,
-                   "version": metric.version, "dimensions": metric.dimensions or []},
+                   "version": metric.version, "dimensions": metric.dimensions or [],
+                   "scope": {"default_filters": metric.default_filters or [],
+                             "effective_from": metric.effective_from.isoformat() if metric.effective_from else None,
+                             "effective_to": metric.effective_to.isoformat() if metric.effective_to else None}},
         "columns": columns, "models": models_,
         "used_by": {"reports": [{"id": r.id, "title": r.title} for r in reports],
                     "alerts": [{"id": a.id, "name": a.name} for a in alerts],
+                    "dashboards": [{"id": d.id, "title": d.title} for d in dashboards],
                     "answers_last_30_days": answers},
         "complete": complete,
         "note": None if complete else
@@ -154,4 +162,12 @@ def graph(db: Session, tenant_id: str) -> dict:
         node(f"alert:{a.id}", "alert", a.name)
         if a.metric in metrics:
             edge(f"metric:{a.metric}", f"alert:{a.id}", "watched by")
+    report_ids = {r.id for r in db.scalars(select(m.Report).where(m.Report.tenant_id == tenant_id))}
+    for d in db.scalars(select(m.Dashboard).where(m.Dashboard.tenant_id == tenant_id)):
+        node(f"dashboard:{d.id}", "dashboard", d.title)
+        for t in d.tiles or []:
+            if t.get("kind") == "metric" and t.get("metric") in metrics:
+                edge(f"metric:{t['metric']}", f"dashboard:{d.id}", "tile")
+            elif t.get("kind") == "report" and t.get("report_id") in report_ids:
+                edge(f"report:{t['report_id']}", f"dashboard:{d.id}", "tile")
     return {"nodes": nodes, "edges": edges}

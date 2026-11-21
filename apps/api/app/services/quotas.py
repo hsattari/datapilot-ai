@@ -15,11 +15,11 @@ from ..config import get_settings
 
 WARN_AT = 0.8
 PLANS: dict[str, dict[str, int]] = {
-    #                 uploads/30d  rows/30d   questions/24h  people  documents
-    "starter":    dict(uploads=50,    rows=500_000,    questions=100,    users=5,   documents=50),
-    "growth":     dict(uploads=500,   rows=5_000_000,  questions=1_000,  users=25,  documents=500),
-    "advanced":   dict(uploads=5_000, rows=50_000_000, questions=10_000, users=100, documents=5_000),
-    "enterprise": dict(uploads=0,     rows=0,          questions=0,      users=0,   documents=0),
+    #                 uploads/30d  rows/30d   questions/24h  people  documents  AI tokens/month
+    "starter":    dict(uploads=50,    rows=500_000,    questions=100,    users=5,   documents=50,    ai_tokens=300_000),
+    "growth":     dict(uploads=500,   rows=5_000_000,  questions=1_000,  users=25,  documents=500,   ai_tokens=3_000_000),
+    "advanced":   dict(uploads=5_000, rows=50_000_000, questions=10_000, users=100, documents=5_000, ai_tokens=30_000_000),
+    "enterprise": dict(uploads=0,     rows=0,          questions=0,      users=0,   documents=0,     ai_tokens=0),
 }
 LABELS = {
     "uploads": ("files uploaded in the last 30 days", "uploads"),
@@ -27,6 +27,7 @@ LABELS = {
     "questions": ("questions asked in the last 24 hours", "questions"),
     "users": ("people in the organisation", "people"),
     "documents": ("knowledge documents", "documents"),
+    "ai_tokens": ("AI tokens used this month (above the limit, questions use the built-in rules instead of the AI model)", "tokens"),
 }
 
 
@@ -53,6 +54,8 @@ def used(db: Session, tenant_id: str) -> dict[str, int]:
             m.TenantMembership.tenant_id == tenant_id)) or 0,
         "documents": db.scalar(select(func.count()).select_from(m.Document).where(
             m.Document.tenant_id == tenant_id)) or 0,
+        "ai_tokens": int(db.scalar(select(func.coalesce(func.sum(m.AiUsage.tokens), 0)).where(
+            m.AiUsage.tenant_id == tenant_id, m.AiUsage.month == datetime.now(timezone.utc).strftime("%Y-%m"))) or 0),
     }
 
 

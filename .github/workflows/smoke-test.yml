@@ -1,0 +1,23 @@
+name: smoke-test
+# Runs scripts/smoke_test.py against a deployed environment (staging or production). Manual, or call it after a deploy.
+# It signs up a throwaway organisation, uploads the 3-order reference file, checks net revenue 350 and gross profit 140,
+# and deletes the organisation again. Costs a few seconds of compute; no secrets needed.
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: Web address of the environment, e.g. https://datapilot-web.xxx.uksouth.azurecontainerapps.io
+        required: true
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Smoke test
+        env:
+          BASE_URL: ${{ inputs.base_url }}
+        run: python scripts/smoke_test.py "$BASE_URL"

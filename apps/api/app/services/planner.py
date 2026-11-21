@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pydantic import ValidationError
 
 from ..config import get_settings
+from . import aibudget
 from .query_engine import Plan
 
 REFUSE = re.compile(
@@ -283,11 +284,14 @@ def llm_plan(question: str, approved: dict[str, str], unapproved: dict[str, str]
     if not (s.azure_openai_endpoint and s.azure_openai_api_key and s.azure_openai_deployment):
         return None, "not_configured"
     unapproved = unapproved or {}
+    if aibudget.exhausted(aibudget.current()):   # monthly token budget used up: the rules answer instead
+        return None, "budget_reached"
     try:
         r = _client().chat.completions.create(
             model=s.azure_openai_deployment, temperature=0, response_format={"type": "json_object"},
             messages=[{"role": "system", "content": build_system_prompt(approved, unapproved)},
                       {"role": "user", "content": f"<question>{question.replace('</question>', '')}</question>"}])
+        aibudget.record(aibudget.current(), "plan", getattr(getattr(r, "usage", None), "total_tokens", None))
         data = json.loads(r.choices[0].message.content)
         if not isinstance(data, dict):
             return None, "not_an_object"

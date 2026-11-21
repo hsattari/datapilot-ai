@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from .. import models as m
 from ..deps import Principal
 from ..observability import span_error, tracer
+from . import classification
 from .backends import get_backend
 from .dimensions import ATTR_TO_ROLE
 from .query_engine import QueryRejected, compile_plan, execute_readonly
@@ -40,6 +41,20 @@ def run_plan(db: Session, p: Principal, plan, today: date | None = None) -> dict
         return out
 
 
+def metric_scope(metric) -> dict:
+    return {"filters": list(metric.default_filters or []),
+            "effective_from": metric.effective_from.isoformat() if metric.effective_from else None,
+            "effective_to": metric.effective_to.isoformat() if metric.effective_to else None}
+
+
+def scope_caveat(metric) -> str | None:
+    sc = metric_scope(metric)
+    bits = [f"{f['field']} = {f['value']}" for f in sc["filters"]]
+    if sc["effective_from"] or sc["effective_to"]:
+        bits.append(f"orders dated {sc['effective_from'] or 'the start'} to {sc['effective_to'] or 'today'}")
+    return ("This metric's definition only covers " + "; ".join(bits) + ".") if bits else None
+
+
 def _compile(db: Session, p: Principal, plan, today: date | None = None):
     """Approval, dimension and policy checks, then compile to parameterised SQL. Shared by run and preview so a
     preview can never show something the real run would refuse (or the other way round)."""
@@ -48,13 +63,19 @@ def _compile(db: Session, p: Principal, plan, today: date | None = None):
                                               m.Metric.status == "approved"))
     if metric is None:
         raise QueryRejected("Metric is not approved")
+    blocked = classification.refusal(db, p.tenant_id, p.role, metric.name,
+                                     list(plan.dimensions) + [f.field for f in plan.filters])
+    if blocked:
+        raise QueryRejected(blocked)
     for dim in plan.dimensions:
         if dim not in metric.dimensions and dim not in ATTR_TO_ROLE:  # dimension-table attributes apply to every metric
             raise QueryRejected(f"Dimension not allowed for metric: {dim}")
     backend = get_backend()
-    needs_dims = any(a in plan.dimensions or any(f.field == a for f in plan.filters) for a in ATTR_TO_ROLE)
+    scope = metric_scope(metric)
+    needs_dims = any(a in plan.dimensions or any(f.field == a for f in plan.filters)
+                     or any(f["field"] == a for f in scope["filters"]) for a in ATTR_TO_ROLE)
     sql, params = compile_plan(plan, metric.expression, metric.aggregation, today, backend.month_expr("order_date"),
-                               backend.tables(p.tenant_id) if needs_dims else None)
+                               backend.tables(p.tenant_id) if needs_dims else None, scope)
     return metric, backend, sql, params
 
 
@@ -63,19 +84,21 @@ def preview_plan(db: Session, p: Principal, plan, today: date | None = None) -> 
     metric, _, sql, params = _compile(db, p, plan, today)
     return {"sql": sql, "params": [str(x) for x in params],
             "metric": {"name": metric.name, "label": metric.label, "definition": metric.description,
-                       "expression": metric.expression, "version": metric.version}}
+                       "expression": metric.expression, "version": metric.version, "scope": metric_scope(metric)}}
 
 
 def _run_plan(db: Session, p: Principal, plan, today: date | None = None) -> dict:
     metric, backend, sql, params = _compile(db, p, plan, today)
     cols, rows = execute_readonly(p.tenant_id, sql, params)
     caveats = ["Associations shown here do not establish causation."]
+    if scope_caveat(metric):
+        caveats.append(scope_caveat(metric))
     fresh = backend.scalar(p.tenant_id, "SELECT max(order_date) FROM fact_sales")
     missing_cost = backend.scalar(p.tenant_id, "SELECT count(*) FROM fact_sales WHERE cost_of_goods_sold IS NULL")
     if "cost_of_goods_sold" in metric.expression and missing_cost:
         caveats.append(f"{missing_cost} order rows have no cost data; profit is incomplete for them.")
     return {"columns": cols, "rows": rows, "sql": sql,
             "metric": {"name": metric.name, "label": metric.label, "definition": metric.description,
-                       "expression": metric.expression, "version": metric.version},
+                       "expression": metric.expression, "version": metric.version, "scope": metric_scope(metric)},
             "freshness": {"latest_order_date": str(fresh) if fresh else None},
             "caveats": caveats}

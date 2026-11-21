@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from .. import models as m
 from . import summaries
+from . import aibudget
 from .common import run_plan
 from .planner import make_plan
 from .query_engine import QueryRejected
@@ -41,6 +42,7 @@ def create_once(db: Session, tenant_id: str) -> dict | None:
     for title, question in QUESTIONS:
         try:
             with db.begin_nested():
+                aibudget.bind(tenant_id)
                 res = make_plan(question, approved, unapproved)
                 if res.outcome == "plan":
                     run_plan(db, p, res.plan)           # only what runs today is saved

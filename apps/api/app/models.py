@@ -1,9 +1,9 @@
 """Operational metadata schema (control plane). Analytical data lives elsewhere."""
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import sqlalchemy as sa
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -29,6 +29,8 @@ class Tenant(Base):
     require_mfa: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sa.false())
     quality_settings: Mapped[dict | None] = mapped_column(JSON, nullable=True)   # thresholds, see services/quality.py
     plan: Mapped[str] = mapped_column(String(20), default="starter", server_default="starter")  # set by the service owner
+    business_description: Mapped[str | None] = mapped_column(Text, nullable=True)   # what the organisation does (context for people and AI prompts)
+    column_classification: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # {"fields": {...}, "metrics": {...}}, see services/classification.py
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
@@ -45,6 +47,8 @@ class User(Base):
     mfa_secret: Mapped[str | None] = mapped_column(Text, nullable=True)      # encrypted at rest
     mfa_recovery: Mapped[list] = mapped_column(JSON, default=list)           # sha256 of unused recovery codes
     mfa_last_step: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    consent_version: Mapped[str | None] = mapped_column(String(40), nullable=True)   # terms/privacy version accepted
+    consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class UserIdentity(Base):
@@ -143,6 +147,10 @@ class Metric(Base):
     owner: Mapped[str | None] = mapped_column(String(200), nullable=True)
     unit: Mapped[str | None] = mapped_column(String(30), nullable=True)
     example_questions: Mapped[list] = mapped_column(JSON, default=list)
+    # Scope: part of the definition. Changing it bumps the version and needs approval again.
+    default_filters: Mapped[list] = mapped_column(JSON, default=list)       # [{"field": "region", "value": "North"}]
+    effective_from: Mapped[date | None] = mapped_column(Date, nullable=True)
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
@@ -308,3 +316,15 @@ class Dashboard(Base):
     tiles: Mapped[list] = mapped_column(JSON, default=list)     # [{kind: metric|report, metric?|report_id?}]
     created_by: Mapped[str] = mapped_column(String(36))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class AiUsage(Base):
+    """Model tokens used per organisation per month and kind (plan / embed). Counts only, never content."""
+    __tablename__ = "ai_usage"
+    __table_args__ = (UniqueConstraint("tenant_id", "month", "kind"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    month: Mapped[str] = mapped_column(String(7))            # YYYY-MM (UTC)
+    kind: Mapped[str] = mapped_column(String(20))
+    tokens: Mapped[int] = mapped_column(Integer, default=0)
+    calls: Mapped[int] = mapped_column(Integer, default=0)

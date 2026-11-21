@@ -1,6 +1,6 @@
 import hashlib
 from typing import Annotated, Literal
-from datetime import date
+from datetime import date, datetime, timezone
 
 from starlette.concurrency import run_in_threadpool
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
@@ -27,7 +27,7 @@ from .schemas import ApproveIn, QuestionIn, RegisterIn, SourceIn
 from .security import create_token, hash_password
 from .services.backends import get_backend
 from .services.common import audit, owned, preview_plan, run_plan
-from .services import answering, insights, modelling, quality, quotas, semantic, sources
+from .services import aibudget, answering, classification, product_analytics as product_analytics_, insights, modelling, quality, quotas, semantic, sources
 from .services.planner import make_plan
 from .services.query_engine import QueryRejected
 from .services.storage import get_storage, safe_filename
@@ -89,16 +89,46 @@ def healthz():
 def register(body: RegisterIn, db: Session = Depends(get_db)):
     if db.scalar(select(m.User).where(m.User.email == body.email.lower())):
         raise HTTPException(409, "Email already registered")
-    tenant = m.Tenant(name=body.organisation, currency=body.currency, auto_model=get_settings().auto_model_default,
-                      plan=get_settings().default_plan)
+    cfg = get_settings()
+    if cfg.require_consent and not body.accept_terms:
+        raise HTTPException(422, "Please accept the terms and the privacy notice to create a workspace")
+    tenant = m.Tenant(name=body.organisation, currency=body.currency, auto_model=cfg.auto_model_default,
+                      plan=cfg.default_plan, business_description=(body.business_description or "").strip() or None)
     user = m.User(email=body.email.lower(), password_hash=hash_password(body.password))
+    if body.accept_terms:
+        user.consent_version, user.consent_at = cfg.terms_version, datetime.now(timezone.utc)
     db.add_all([tenant, user])
     db.flush()
     db.add(m.TenantMembership(tenant_id=tenant.id, user_id=user.id, role="admin"))
     semantic.seed_metrics(db, tenant.id)
-    db.add(m.AuditEvent(tenant_id=tenant.id, user_id=user.id, action="tenant.created", detail={}))
+    db.add(m.AuditEvent(tenant_id=tenant.id, user_id=user.id, action="tenant.created",
+                        detail={"consent": cfg.terms_version if body.accept_terms else None}))
     db.commit()
     return {"tenant_id": tenant.id, "token": create_token(user.id)}
+
+
+@app.get("/api/v1/analytics/product")
+def product_analytics(p: Principal = Depends(require_admin), db: Session = Depends(get_db)):
+    """How this organisation is using the product: activation, time to first dashboard, retention, cost to serve."""
+    return product_analytics_.tenant_metrics(db, p.tenant_id)
+
+
+@app.get("/api/v1/consent")
+def get_consent(p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+    u, cfg = db.get(m.User, p.user_id), get_settings()
+    return {"current_version": cfg.terms_version, "accepted_version": u.consent_version,
+            "accepted_at": u.consent_at.isoformat() if u.consent_at else None,
+            "up_to_date": u.consent_version == cfg.terms_version, "required": cfg.require_consent}
+
+
+@app.post("/api/v1/consent")
+def accept_consent(p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+    """Record that this person accepted the current terms and privacy notice (version and time, nothing else)."""
+    u, cfg = db.get(m.User, p.user_id), get_settings()
+    u.consent_version, u.consent_at = cfg.terms_version, datetime.now(timezone.utc)
+    audit(db, p, "consent.accepted", version=cfg.terms_version)
+    db.commit()
+    return {"accepted_version": u.consent_version, "accepted_at": u.consent_at.isoformat()}
 
 
 @app.post("/api/v1/data-sources", status_code=201)
@@ -275,7 +305,10 @@ def list_metrics(p: Principal = Depends(get_principal), db: Session = Depends(ge
     rows = db.scalars(select(m.Metric).where(m.Metric.tenant_id == p.tenant_id)).all()
     return [{"name": x.name, "label": x.label, "description": x.description, "expression": x.expression,
              "aggregation": x.aggregation, "status": x.status, "version": x.version,
-             "owner": x.owner, "unit": x.unit, "example_questions": x.example_questions or []} for x in rows]
+             "owner": x.owner, "unit": x.unit, "example_questions": x.example_questions or [],
+             "default_filters": x.default_filters or [],
+             "effective_from": x.effective_from.isoformat() if x.effective_from else None,
+             "effective_to": x.effective_to.isoformat() if x.effective_to else None} for x in rows]
 
 
 class MetricMeta(BaseModel):
@@ -295,6 +328,66 @@ def update_metric_meta(name: str, body: MetricMeta, p: Principal = Depends(requi
     audit(db, p, "metric.metadata_updated", name=name)
     db.commit()
     return {"name": x.name, "owner": x.owner, "unit": x.unit, "example_questions": x.example_questions}
+
+
+class MetricScopeFilter(BaseModel):
+    field: Literal["product", "region", "customer", "category", "segment"]
+    value: str = Field(min_length=1, max_length=200)
+
+
+class MetricScope(BaseModel):
+    default_filters: list[MetricScopeFilter] = Field(default_factory=list, max_length=3)
+    effective_from: date | None = None
+    effective_to: date | None = None
+
+
+@app.put("/api/v1/metrics/{name}/scope")
+def update_metric_scope(name: str, body: MetricScope, p: Principal = Depends(require_admin), db: Session = Depends(get_db)):
+    """Default filters and an effective date range are PART OF THE DEFINITION: saving them raises the version and
+    puts the metric back to 'requires_business_approval', so nothing changes for answers until an admin approves it."""
+    if body.effective_from and body.effective_to and body.effective_from > body.effective_to:
+        raise HTTPException(422, "effective_from must not be after effective_to")
+    x = db.scalar(select(m.Metric).where(m.Metric.tenant_id == p.tenant_id, m.Metric.name == name))
+    if x is None:
+        raise HTTPException(404, "Metric not found")
+    before = {"filters": x.default_filters or [], "from": str(x.effective_from or ""), "to": str(x.effective_to or "")}
+    x.default_filters = [f.model_dump() for f in body.default_filters]
+    x.effective_from, x.effective_to = body.effective_from, body.effective_to
+    after = {"filters": x.default_filters, "from": str(x.effective_from or ""), "to": str(x.effective_to or "")}
+    changed = before != after
+    if changed:
+        x.version += 1
+        x.status = "requires_business_approval"
+    audit(db, p, "metric.scope_changed", name=name, changed=changed, version=x.version, filters=len(x.default_filters))
+    db.commit()
+    return {"name": x.name, "version": x.version, "status": x.status, "default_filters": x.default_filters,
+            "effective_from": x.effective_from.isoformat() if x.effective_from else None,
+            "effective_to": x.effective_to.isoformat() if x.effective_to else None}
+
+
+class ClassificationBody(BaseModel):
+    fields: dict[str, str] = Field(default_factory=dict)
+    metrics: dict[str, str] = Field(default_factory=dict)
+
+
+@app.get("/api/v1/classification")
+def get_classification(p: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+    return {**classification.load(db, p.tenant_id), "levels": classification.LEVELS, "needs_role": classification.NEEDS,
+            "fields_available": classification.FIELDS}
+
+
+@app.put("/api/v1/classification")
+def set_classification(body: ClassificationBody, p: Principal = Depends(require_admin), db: Session = Depends(get_db)):
+    """public/internal: everyone. confidential: analyst and admin. restricted: admin only."""
+    names = {x.name for x in db.scalars(select(m.Metric).where(m.Metric.tenant_id == p.tenant_id))}
+    try:
+        value = classification.validate(body.model_dump(), names)
+    except classification.ClassificationInvalid as e:
+        raise HTTPException(422, str(e))
+    db.get(m.Tenant, p.tenant_id).column_classification = value
+    audit(db, p, "classification.updated", fields=len(value["fields"]), metrics=len(value["metrics"]))
+    db.commit()
+    return value
 
 
 @app.post("/api/v1/metrics/{name}/approve")
@@ -319,6 +412,7 @@ def analytics_preview(body: QuestionIn, p: Principal = Depends(get_principal), d
         m.Metric.tenant_id == p.tenant_id, m.Metric.status == "approved"))}
     unapproved = {x.name: x.description for x in db.scalars(select(m.Metric).where(
         m.Metric.tenant_id == p.tenant_id, m.Metric.status != "approved"))}
+    aibudget.bind(p.tenant_id)
     res = make_plan(body.question, approved, unapproved)
     db.add(m.AnalyticalQuery(tenant_id=p.tenant_id, user_id=p.user_id, question=body.question[:1000],
                              outcome="preview" if res.outcome == "plan" else res.outcome))
@@ -373,7 +467,9 @@ def export_powerbi(p: Principal = Depends(require_writer), db: Session = Depends
     rows = db.scalars(select(m.Metric).where(m.Metric.tenant_id == p.tenant_id)).all()
     out = build_export([{"name": x.name, "label": x.label, "description": x.description,
                          "expression": x.expression, "aggregation": x.aggregation, "status": x.status,
-                         "version": x.version} for x in rows])
+                         "version": x.version, "default_filters": x.default_filters or [],
+                         "effective_from": x.effective_from.isoformat() if x.effective_from else None,
+                         "effective_to": x.effective_to.isoformat() if x.effective_to else None} for x in rows])
     audit(db, p, "export.powerbi", measures=len(out["model_bim"]["model"]["tables"][0]["measures"]))
     db.commit()
     return out

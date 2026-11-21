@@ -7,12 +7,12 @@ const card = { background: "#fff", borderRadius: 8, padding: 16, boxShadow: "0 1
 
 function Auth({ onAuthed }: { onAuthed: () => void }) {
   const [mode, setMode] = useState<"login" | "register">("register");
-  const [f, setF] = useState({ organisation: "", email: "", password: "", code: "" });
+  const [f, setF] = useState({ organisation: "", email: "", password: "", code: "", about: "", accept: false });
   const [needCode, setNeedCode] = useState(false);
   const [err, setErr] = useState("");
   const submit = async () => {
     try {
-      const r = mode === "register" ? await api("/tenants", { method: "POST", body: JSON.stringify({ organisation: f.organisation, email: f.email, password: f.password }) })
+      const r = mode === "register" ? await api("/tenants", { method: "POST", body: JSON.stringify({ organisation: f.organisation, email: f.email, password: f.password, business_description: f.about || undefined, accept_terms: f.accept }) })
                                     : await api("/auth/login", { method: "POST", body: JSON.stringify({ email: f.email, password: f.password, code: f.code || undefined }) });
       setToken(r.token); onAuthed();
     } catch (e: any) {
@@ -26,6 +26,8 @@ function Auth({ onAuthed }: { onAuthed: () => void }) {
       {mode === "register" && <input placeholder="Organisation" value={f.organisation} onChange={e => setF({ ...f, organisation: e.target.value })} />}
       <input placeholder="Email" value={f.email} onChange={e => setF({ ...f, email: e.target.value })} />
       <input placeholder="Password (10+ chars)" type="password" value={f.password} onChange={e => setF({ ...f, password: e.target.value })} />
+      {mode === "register" && <input placeholder="What does your business do? (optional)" maxLength={500} value={f.about} onChange={e => setF({ ...f, about: e.target.value })} />}
+      {mode === "register" && <label style={{ display: "block", fontSize: 13, margin: "6px 0" }}><input type="checkbox" checked={f.accept} onChange={e => setF({ ...f, accept: e.target.checked })} style={{ display: "inline", width: "auto", marginRight: 6 }} />I accept the terms and the privacy notice</label>}
       {mode === "login" && needCode && <input placeholder="Authenticator or recovery code" autoComplete="one-time-code" value={f.code} onChange={e => setF({ ...f, code: e.target.value })} />}
       <p><button onClick={submit}>{mode === "register" ? "Create workspace" : "Sign in"}</button>{" "}
         <a href="#" onClick={e => { e.preventDefault(); setMode(mode === "login" ? "register" : "login"); }}>{mode === "login" ? "Register" : "Sign in"}</a></p>
@@ -493,7 +495,30 @@ function MetricDetails({ m, onSaved }: { m: any; onSaved: () => void }) {
     <label>Example questions, one per line (up to 5)<textarea rows={3} value={qs} onChange={e => setQs(e.target.value)} /></label>
     <button onClick={save}>Save details</button> {msg && <small role="status">{msg}</small>}
     <small style={{ display: "block" }}>Changing these never changes the definition, version or approval. Administrators only.</small>
+    <MetricScope m={m} onSaved={onSaved} />
   </div>);
+}
+
+function MetricScope({ m, onSaved }: { m: any; onSaved: () => void }) {
+  const [from, setFrom] = useState(m.effective_from || ""); const [to, setTo] = useState(m.effective_to || "");
+  const [filters, setFilters] = useState<{ field: string; value: string }[]>(m.default_filters || []); const [msg, setMsg] = useState("");
+  const save = async () => {
+    try { const r = await api(`/metrics/${m.name}/scope`, { method: "PUT", body: JSON.stringify({ default_filters: filters.filter(f => f.value.trim()), effective_from: from || null, effective_to: to || null }) });
+      setMsg(r.status === "approved" ? "No change." : `Saved as version ${r.version}. Approve it again before it is used in answers.`); onSaved(); }
+    catch (e: any) { setMsg(e.message); }
+  };
+  return (<fieldset style={{ marginTop: 10 }} data-testid="metric-scope"><legend>Scope (part of the definition)</legend>
+    <label>Only count orders from<input type="date" value={from} onChange={e => setFrom(e.target.value)} /></label>
+    <label>Only count orders up to<input type="date" value={to} onChange={e => setTo(e.target.value)} /></label>
+    {filters.map((f, i) => <div key={i} style={{ display: "flex", gap: 6 }}>
+      <select aria-label="Filter field" value={f.field} onChange={e => setFilters(v => v.map((x, j) => j === i ? { ...x, field: e.target.value } : x))}>
+        {["product", "region", "customer", "category", "segment"].map(o => <option key={o}>{o}</option>)}</select>
+      <input aria-label="Filter value" placeholder="equals" value={f.value} onChange={e => setFilters(v => v.map((x, j) => j === i ? { ...x, value: e.target.value } : x))} />
+      <button style={{ background: "#6b7280" }} onClick={() => setFilters(v => v.filter((_, j) => j !== i))}>Remove</button></div>)}
+    {filters.length < 3 && <button style={{ background: "#6b7280" }} onClick={() => setFilters(v => [...v, { field: "region", value: "" }])}>Add a default filter</button>}{" "}
+    <button onClick={save}>Save scope</button> {msg && <small role="status">{msg}</small>}
+    <small style={{ display: "block" }}>Saving a change raises the version and needs approval again. Every answer shows the scope as a caveat.</small>
+  </fieldset>);
 }
 
 function Metrics() {
@@ -743,7 +768,7 @@ function Activity() {
       {usage.quota && <div data-testid="plan-limits" style={{ marginTop: 8 }}>
         <p style={{ margin: "0 0 4px" }}>Plan: <b>{usage.quota.plan}</b> (placeholder limits, 0 = unlimited)</p>
         <table><thead><tr><th>What</th><th>Used</th><th>Limit</th></tr></thead><tbody>
-          {([["uploads", "Files uploaded (30 days)"], ["rows", "Rows loaded (30 days)"], ["questions", "Questions (24 hours)"], ["users", "People"], ["documents", "Knowledge documents"]] as [string, string][]).map(([k, label]) =>
+          {([["uploads", "Files uploaded (30 days)"], ["rows", "Rows loaded (30 days)"], ["questions", "Questions (24 hours)"], ["users", "People"], ["documents", "Knowledge documents"], ["ai_tokens", "AI tokens (this month)"]] as [string, string][]).map(([k, label]) =>
             <tr key={k}><td>{label}</td><td>{Number(usage.quota.used[k]).toLocaleString()}</td><td>{usage.quota.limits[k] ? Number(usage.quota.limits[k]).toLocaleString() : "unlimited"}</td></tr>)}
         </tbody></table></div>}</div>}
     {fb && <div style={card} data-testid="feedback"><h3 style={{ marginTop: 0 }}>Answer feedback</h3>
@@ -907,14 +932,44 @@ function YourData() {
   </>);
 }
 
+function Classification() {
+  const [c, setC] = useState<any>(null); const [metrics, setMetrics] = useState<any[]>([]); const [msg, setMsg] = useState("");
+  useEffect(() => { Promise.all([api("/classification"), api("/metrics")]).then(([a, b]) => { setC(a); setMetrics(b); }).catch(e => setMsg(e.message)); }, []);
+  if (!c) return msg ? <div style={card}><small role="alert">{msg}</small></div> : null;
+  const set = (kind: "fields" | "metrics", name: string, level: string) => setC((v: any) => ({ ...v, [kind]: { ...v[kind], [name]: level } }));
+  const save = async () => { try { const r = await api("/classification", { method: "PUT", body: JSON.stringify({ fields: c.fields, metrics: c.metrics }) }); setC((v: any) => ({ ...v, ...r })); setMsg("Saved."); } catch (e: any) { setMsg(e.message); } };
+  const pick = (kind: "fields" | "metrics", name: string) => (
+    <select aria-label={`Classification of ${name}`} value={c[kind][name] || "public"} onChange={e => set(kind, name, e.target.value)}>
+      {c.levels.map((l: string) => <option key={l} value={l}>{l} ({c.needs_role[l]} and above)</option>)}</select>);
+  return (<div style={card} data-testid="classification"><h3 style={{ marginTop: 0 }}>Data classification</h3>
+    <p style={{ marginTop: 0 }}>Restrict who can group by, filter on or ask for a field or metric. Public and internal: everyone. Confidential: analysts and administrators. Restricted: administrators only.</p>
+    <table><thead><tr><th>Field or metric</th><th>Classification</th></tr></thead><tbody>
+      {c.fields_available.map((f: string) => <tr key={f}><td>Field: {f}</td><td>{pick("fields", f)}</td></tr>)}
+      {metrics.map((x: any) => <tr key={x.name}><td>Metric: {x.label}</td><td>{pick("metrics", x.name)}</td></tr>)}</tbody></table>
+    <button onClick={save}>Save classification</button> {msg && <small role="status">{msg}</small>}</div>);
+}
+
+function ProductAnalytics() {
+  const [a, setA] = useState<any>(null);
+  useEffect(() => { api("/analytics/product").then(setA).catch(() => {}); }, []);
+  if (!a) return null;
+  const mins = (v: number | null) => v === null || v === undefined ? "not yet" : v < 60 ? `${v} min` : `${(v / 60).toFixed(1)} h`;
+  return (<div style={card} data-testid="product-analytics"><h3 style={{ marginTop: 0 }}>How your organisation uses DataPilot</h3>
+    <p style={{ marginTop: 0 }}>{a.activated ? "Activated: uploaded data, has an approved model and a dashboard, and has asked a question." : "Not activated yet."}{" "}
+      {Object.entries(a.activation_steps).map(([k, v]) => <span key={k} style={{ marginRight: 8 }}>{v ? "✓" : "○"} {k.replace(/_/g, " ")}</span>)}</p>
+    <p>Time from sign-up to first upload: {mins(a.minutes_to_first_upload)}; first dashboard: {mins(a.minutes_to_first_dashboard)}; first answer: {mins(a.minutes_to_first_answer)}.</p>
+    <p>Active people: {a.active_people_7d} in the last 7 days, {a.active_people_30d} in the last 30. Weekly: {a.weekly_active_people.map((w: any) => w.active_people).join(" · ")}</p>
+    <p style={{ marginBottom: 0 }}>Last 30 days: {a.cost_to_serve_30d.questions} questions, {Number(a.cost_to_serve_30d.rows_loaded).toLocaleString()} rows loaded. AI tokens this month: {Number(a.cost_to_serve_30d.ai_tokens_this_month).toLocaleString()}.</p></div>);
+}
+
 function Settings() {
-  const [f, setF] = useState({ name: "", currency: "", timezone: "", auto_model: true, require_mfa: false });
+  const [f, setF] = useState({ name: "", currency: "", timezone: "", auto_model: true, require_mfa: false, business_description: "" });
   const [role, setRole] = useState("");
   const [msg, setMsg] = useState("");
   const [loaded, setLoaded] = useState(false);
   useEffect(() => {
     let live = true;
-    api("/settings").then(r => { if (!live) return; setF({ name: r.name, currency: r.currency, timezone: r.timezone, auto_model: r.auto_model, require_mfa: r.require_mfa }); setRole(r.your_role); setLoaded(true); })
+    api("/settings").then(r => { if (!live) return; setF({ name: r.name, currency: r.currency, timezone: r.timezone, auto_model: r.auto_model, require_mfa: r.require_mfa, business_description: r.business_description || "" }); setRole(r.your_role); setLoaded(true); })
       .catch(e => live && setMsg(e.message));
     return () => { live = false; };
   }, []);
@@ -922,6 +977,7 @@ function Settings() {
   return (<><div style={card}>
     <p style={{ marginTop: 0 }}>Your role: <b>{role}</b>. Only administrators can change settings.</p>
     <label>Organisation<input disabled={!loaded} value={f.name} onChange={e => setF(v => ({ ...v, name: e.target.value }))} /></label>
+    <label>What does your business do? (up to 500 characters)<textarea rows={2} maxLength={500} disabled={!loaded} value={f.business_description} onChange={e => setF(v => ({ ...v, business_description: e.target.value }))} /></label>
     <label>Currency (3 letters, e.g. GBP)<input disabled={!loaded} value={f.currency} onChange={e => setF(v => ({ ...v, currency: e.target.value.toUpperCase() }))} /></label>
     <label>Time zone (e.g. Europe/London)<input disabled={!loaded} value={f.timezone} onChange={e => setF(v => ({ ...v, timezone: e.target.value }))} /></label>
     <label style={{ display: "block", margin: "8px 0" }}><input type="checkbox" disabled={!loaded} checked={f.auto_model}
@@ -933,7 +989,7 @@ function Settings() {
       Require two-step sign-in for everyone in this organisation</label>
     <p style={{ margin: "0 0 8px", fontSize: 13 }}>People who have not set it up can only reach the set-up screen until they do. You must have it on for your own account first. People who sign in through a company identity provider use that provider's own checks.</p>
     <button onClick={save} disabled={!loaded || role !== "admin"}>Save settings</button> {msg && <span role="status">{msg}</span>}
-  </div>{role === "admin" && <QualityRules />}{role === "admin" && <YourData />}</>);
+  </div>{role === "admin" && <QualityRules />}{role === "admin" && <Classification />}{role === "admin" && <ProductAnalytics />}{role === "admin" && <YourData />}</>);
 }
 
 export default function Page() {

@@ -9,6 +9,7 @@ import math
 import re
 
 from ..config import get_settings
+from . import aibudget
 
 _TOKEN = re.compile(r"[a-z0-9]+")
 
@@ -45,4 +46,5 @@ def embed_texts(texts: list[str]) -> tuple[list[list[float]], str]:
         r = client.embeddings.create(model=s.azure_openai_embedding_deployment,
                                      input=texts[i:i + 64], dimensions=s.embedding_dimensions)
         out += [d.embedding for d in r.data]
+        aibudget.record(aibudget.current(), "embed", getattr(getattr(r, "usage", None), "total_tokens", None))
     return out, "azure"

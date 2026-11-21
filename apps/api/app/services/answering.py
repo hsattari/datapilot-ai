@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from .. import models as m
 from ..deps import Principal
-from . import insights, quotas
+from . import aibudget, insights, quotas
 from .common import audit, run_plan
 from .planner import make_plan
 from .query_engine import QueryRejected
@@ -20,6 +20,7 @@ def answer_question(db: Session, p: Principal, question: str, prev: dict | None 
         m.Metric.tenant_id == p.tenant_id, m.Metric.status == "approved"))}
     unapproved = {x.name: x.description for x in db.scalars(select(m.Metric).where(
         m.Metric.tenant_id == p.tenant_id, m.Metric.status != "approved"))}
+    aibudget.bind(p.tenant_id)
     res = make_plan(question, approved, unapproved, prev)
     if res.outcome == "explain":
         try:
