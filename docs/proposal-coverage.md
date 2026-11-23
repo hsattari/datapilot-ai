@@ -70,7 +70,7 @@ API gaps against the illustrative list: `POST /data-sources/{id}/sync`. `POST /c
 
 Present: Home, Data Sources (with datasets, quality panel, joins, schema versions), Business Metrics, Ask Your Data, Reports, Alerts, Activity (with jobs and usage), Settings (with people and two-step sign-in), browser-tested.
 
-Ask Your Data is now a chat (follow-ups, history, feedback, CSV download). Dashboards page: **Tested**. Not built: invitations by e-mail, Microsoft sign-in button.
+Ask Your Data is now a chat (follow-ups, history, feedback, CSV download). Dashboards page: **Tested**. **Invitations** (one-time link, hashed token, 7-day expiry, revoke; e-mail through any SMTP server, or the link is shown to the administrator when none is set) and a **Sign in with Microsoft** button (ID-token flow with state + nonce, verified by the API) are built and **tested locally** (API tests, type-check, production build). Not tested against a real Entra app or a real mail server: that needs your app registration and SMTP account (`docs/operations/sso-and-email.md`).
 
 ## 16. Security and UK compliance
 

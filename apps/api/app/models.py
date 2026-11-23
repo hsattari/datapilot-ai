@@ -72,6 +72,22 @@ class TenantMembership(Base):
     role: Mapped[str] = mapped_column(String(20), default="admin")  # admin | analyst | viewer
 
 
+class Invitation(Base):
+    """An administrator's invitation for one e-mail address. Only a hash of the one-time token is stored."""
+    __tablename__ = "invitations"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    email: Mapped[str] = mapped_column(String(320), index=True)
+    role: Mapped[str] = mapped_column(String(20))
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    invited_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    email_sent: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class DataSource(Base):
     __tablename__ = "data_sources"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)

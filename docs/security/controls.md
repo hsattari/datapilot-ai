@@ -54,3 +54,5 @@ The server fetches addresses that customers enter, so `services/netguard.py` app
 - **AI token budget**: counts tokens per organisation per month (no content). Exhausted budget: rules-only planning, never an error or an overspend.
 - **Metric scope changes** are definition changes: version bump, back to unapproved, audited (`metric.scope_changed`).
 - **Image scanning**: Trivy in CI fails the build on fixable CRITICAL/HIGH findings.
+- **Invitations**: random 256-bit token, stored only as a SHA-256 hash, 7-day expiry, single use, replaced when re-invited, revocable, audited (`invitation.created/revoked/accepted`, e-mail address only). Erasing a person deletes their invitations.
+- **Microsoft sign-in**: the browser uses state and nonce; the API verifies the RS256 signature, issuer, audience, expiry and optional directory id, and never creates accounts or re-links by e-mail.

@@ -77,11 +77,66 @@ variable "azure_openai_api_key" {
   description = "Key for the Azure OpenAI resource. Stored in Key Vault. Set with TF_VAR_azure_openai_api_key."
 }
 
+variable "oidc_issuer" {
+  type        = string
+  default     = ""
+  description = "Single sign-on issuer, e.g. https://login.microsoftonline.com/<tenant-id>/v2.0 (Microsoft Entra ID). Empty = password sign-in only."
+}
+
+variable "oidc_client_id" {
+  type        = string
+  default     = ""
+  description = "Application (client) id of the Entra app registration (single-page application, ID tokens enabled)."
+}
+
+variable "oidc_required_tid" {
+  type        = string
+  default     = ""
+  description = "Optional Entra directory id the ID token must come from."
+}
+
+variable "app_base_url" {
+  type        = string
+  default     = ""
+  description = "Public web address (https://...) used in invitation links. Empty = invitations return the link to the administrator."
+}
+
+variable "smtp_host" {
+  type        = string
+  default     = ""
+  description = "SMTP server for invitation e-mails (e.g. smtp.azurecomm.net). Empty = no e-mail is sent."
+}
+
+variable "smtp_port" {
+  type    = number
+  default = 587
+}
+
+variable "smtp_username" {
+  type    = string
+  default = ""
+}
+
+variable "smtp_from" {
+  type        = string
+  default     = ""
+  description = "Sender address, e.g. no-reply@yourdomain.com."
+}
+
+variable "smtp_password" {
+  type        = string
+  sensitive   = true
+  default     = ""
+  description = "SMTP password. Stored in Key Vault. Set with TF_VAR_smtp_password."
+}
+
 locals {
   apps_enabled = var.deploy_apps ? 1 : 0
   # Decided from non-secret inputs only (Terraform cannot use a sensitive value to decide how many resources exist).
   openai_enabled = var.azure_openai_endpoint != "" && var.azure_openai_deployment != ""
   openai_count   = var.deploy_apps && local.openai_enabled ? 1 : 0
+  smtp_enabled   = var.smtp_host != "" && var.smtp_from != ""
+  smtp_count     = var.deploy_apps && local.smtp_enabled ? 1 : 0
   suffix       = substr(md5(azurerm_resource_group.rg.id), 0, 6)
   api_name     = "${var.prefix}-api"
   clam_name    = "${var.prefix}-clamav"
@@ -182,6 +237,14 @@ resource "azurerm_key_vault_secret" "openai" {
   count        = local.openai_count
   name         = "azure-openai-api-key"
   value        = var.azure_openai_api_key
+  key_vault_id = azurerm_key_vault.kv[0].id
+  depends_on   = [azurerm_role_assignment.me_kv, terraform_data.apps_guard]
+}
+
+resource "azurerm_key_vault_secret" "smtp" {
+  count        = local.smtp_count
+  name         = "smtp-password"
+  value        = var.smtp_password == "" ? "-" : var.smtp_password
   key_vault_id = azurerm_key_vault.kv[0].id
   depends_on   = [azurerm_role_assignment.me_kv, terraform_data.apps_guard]
 }
@@ -305,6 +368,14 @@ resource "azurerm_container_app" "api" {
     identity            = azurerm_user_assigned_identity.apps[0].id
   }
   dynamic "secret" {
+    for_each = local.smtp_enabled ? [1] : []
+    content {
+      name                = "smtp-password"
+      key_vault_secret_id = azurerm_key_vault_secret.smtp[0].versionless_id
+      identity            = azurerm_user_assigned_identity.apps[0].id
+    }
+  }
+  dynamic "secret" {
     for_each = local.openai_enabled ? [1] : []
     content {
       name                = "openai-key"
@@ -382,6 +453,29 @@ resource "azurerm_container_app" "api" {
       env {
         name  = "TRUST_PROXY_HEADERS" # the API is reachable only through the web app's proxy
         value = "true"
+      }
+      dynamic "env" {
+        for_each = { for k, v in {
+          OIDC_ISSUER       = var.oidc_issuer
+          OIDC_CLIENT_ID    = var.oidc_client_id
+          OIDC_REQUIRED_TID = var.oidc_required_tid
+          APP_BASE_URL      = var.app_base_url
+          SMTP_HOST         = var.smtp_host
+          SMTP_PORT         = tostring(var.smtp_port)
+          SMTP_USERNAME     = var.smtp_username
+          SMTP_FROM         = var.smtp_from
+        } : k => v if v != "" }
+        content {
+          name  = env.key
+          value = env.value
+        }
+      }
+      dynamic "env" {
+        for_each = local.smtp_enabled ? [1] : []
+        content {
+          name        = "SMTP_PASSWORD"
+          secret_name = "smtp-password"
+        }
       }
       dynamic "env" {
         for_each = local.openai_enabled ? {

@@ -75,6 +75,15 @@ class Settings(BaseSettings):
 
     # Plan given to new organisations (starter | growth | advanced | enterprise). Limits: app/services/quotas.py.
     default_plan: str = "starter"
+    # Invitations by e-mail. Empty smtp_host = no e-mail is sent; the administrator gets the link to share instead.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_starttls: bool = True
+    app_base_url: str = ""                 # public web address used in invitation links
+    invite_ttl_days: int = 7
     require_consent: bool = False          # registration needs accept_terms=true when on
     terms_version: str = "2026-11"         # bump when the terms or privacy notice change
 

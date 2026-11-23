@@ -154,6 +154,7 @@ def erase_user(db: Session, tenant_id: str, user_id: str) -> None:
                                                    m.ConversationMessage.user_id == user_id))
     db.execute(delete(m.Conversation).where(m.Conversation.tenant_id == tenant_id, m.Conversation.user_id == user_id))
     db.execute(delete(m.UserIdentity).where(m.UserIdentity.user_id == user_id))
+    db.execute(delete(m.Invitation).where(m.Invitation.tenant_id == tenant_id, m.Invitation.email == old_email))
     db.execute(delete(m.TenantMembership).where(m.TenantMembership.tenant_id == tenant_id,
                                                 m.TenantMembership.user_id == user_id))
     for e in db.scalars(select(m.AuditEvent).where(m.AuditEvent.tenant_id == tenant_id)):

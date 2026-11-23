@@ -1,15 +1,54 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, apiDownload, setToken } from "./api";
 
 type Tab = "home" | "dashboards" | "sources" | "metrics" | "ask" | "reports" | "alerts" | "activity" | "settings";
 const card = { background: "#fff", borderRadius: 8, padding: 16, boxShadow: "0 1px 3px #0001", marginBottom: 16 } as const;
+
+const safeGet = (k: string) => { try { return sessionStorage.getItem(k); } catch { return null; } };
+const safeSet = (k: string, v: string) => { try { sessionStorage.setItem(k, v); } catch { /* private mode */ } };
+const rand = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, "0")).join("");
 
 function Auth({ onAuthed }: { onAuthed: () => void }) {
   const [mode, setMode] = useState<"login" | "register">("register");
   const [f, setF] = useState({ organisation: "", email: "", password: "", code: "", about: "", accept: false });
   const [needCode, setNeedCode] = useState(false);
   const [err, setErr] = useState("");
+  const authed = useRef(onAuthed); authed.current = onAuthed;
+  const [sso, setSso] = useState<{ issuer: string; client_id: string } | null>(null);
+  const [invite, setInvite] = useState<{ token: string; email: string; role: string; organisation: string } | null>(null);
+  useEffect(() => {
+    api("/auth/oidc/config").then(c => { if (c.enabled) setSso(c); }).catch(() => {});
+    const q = new URLSearchParams(window.location.search).get("invite");
+    if (q) api(`/auth/invitation?token=${encodeURIComponent(q)}`).then(i => setInvite({ token: q, ...i })).catch(e => setErr(e.message));
+    // Returning from the identity provider: the ID token is in the address fragment.
+    const h = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    if (h.get("id_token")) {
+      const idToken = h.get("id_token")!, state = h.get("state");
+      window.history.replaceState(null, "", window.location.pathname);
+      if (state && state === safeGet("sso_state")) {
+        api("/auth/oidc/exchange", { method: "POST", body: JSON.stringify({ id_token: idToken, nonce: safeGet("sso_nonce") || undefined }) })
+          .then(r => { setToken(r.token); authed.current(); }).catch(e => setErr(e.message));
+      } else setErr("Sign-in could not be verified. Please try again.");
+    } else if (h.get("error")) { window.history.replaceState(null, "", window.location.pathname); setErr(h.get("error_description") || "Sign-in was cancelled."); }
+  }, []);
+  const startSso = () => {
+    if (!sso) return;
+    const state = rand(), nonce = rand();
+    safeSet("sso_state", state); safeSet("sso_nonce", nonce);
+    const base = sso.issuer.replace(/\/v2\.0\/?$/, "");
+    const u = new URL(`${base}/oauth2/v2.0/authorize`);
+    u.search = new URLSearchParams({ client_id: sso.client_id, response_type: "id_token", response_mode: "fragment", scope: "openid email profile",
+      redirect_uri: window.location.origin + "/", state, nonce }).toString();
+    window.location.assign(u.toString());
+  };
+  const acceptInvite = async () => {
+    if (!invite) return;
+    try {
+      const r = await api("/auth/accept-invitation", { method: "POST", body: JSON.stringify({ token: invite.token, password: f.password }) });
+      window.history.replaceState(null, "", window.location.pathname); setToken(r.token); onAuthed();
+    } catch (e: any) { setErr(e.message); }
+  };
   const submit = async () => {
     try {
       const r = mode === "register" ? await api("/tenants", { method: "POST", body: JSON.stringify({ organisation: f.organisation, email: f.email, password: f.password, business_description: f.about || undefined, accept_terms: f.accept }) })
@@ -20,9 +59,18 @@ function Auth({ onAuthed }: { onAuthed: () => void }) {
       else setErr(e.message);
     }
   };
+  if (invite) return (
+    <div style={{ ...card, maxWidth: 380, margin: "80px auto" }} data-testid="accept-invite">
+      <h2>Join {invite.organisation}</h2>
+      <p>You are invited as <b>{invite.role}</b> ({invite.email}). Choose a password to finish.</p>
+      <input placeholder="Password (10+ chars)" type="password" autoComplete="new-password" value={f.password} onChange={e => setF({ ...f, password: e.target.value })} />
+      <p><button onClick={acceptInvite} disabled={f.password.length < 10}>Join</button></p>
+      {err && <p role="alert" style={{ color: "#b00020" }}>{err}</p>}
+    </div>);
   return (
     <div style={{ ...card, maxWidth: 380, margin: "80px auto" }}>
       <h2>DataPilot AI</h2>
+      {sso && <p><button onClick={startSso} data-testid="sso-button">Sign in with Microsoft</button><br /><small>For people an administrator has already added.</small></p>}
       {mode === "register" && <input placeholder="Organisation" value={f.organisation} onChange={e => setF({ ...f, organisation: e.target.value })} />}
       <input placeholder="Email" value={f.email} onChange={e => setF({ ...f, email: e.target.value })} />
       <input placeholder="Password (10+ chars)" type="password" value={f.password} onChange={e => setF({ ...f, password: e.target.value })} />
@@ -842,8 +890,20 @@ function Users() {
   const [f, setF] = useState({ email: "", password: "", role: "viewer" });
   const [msg, setMsg] = useState("");
   const [erasing, setErasing] = useState("");
-  const load = useCallback(() => api("/users").then(setRows).catch(e => setMsg(e.message)), []);
+  const [inv, setInv] = useState<any[]>([]);
+  const [invF, setInvF] = useState({ email: "", role: "viewer" });
+  const [link, setLink] = useState("");
+  const loadInv = useCallback(() => api("/invitations").then(setInv).catch(() => {}), []);
+  const load = useCallback(() => { loadInv(); return api("/users").then(setRows).catch(e => setMsg(e.message)); }, [loadInv]);
   useEffect(() => { load(); }, [load]);
+  const sendInvite = async () => {
+    try {
+      const r = await api("/invitations", { method: "POST", body: JSON.stringify(invF) });
+      setLink(r.link || ""); setMsg(r.email_sent ? `Invitation e-mailed to ${invF.email}.` : `No mail server is set up: share this link with ${invF.email} securely (shown once).`);
+      setInvF({ email: "", role: "viewer" }); await loadInv();
+    } catch (e: any) { setMsg(e.message); }
+  };
+  const revoke = async (id: string) => { try { await api(`/invitations/${id}`, { method: "DELETE" }); await loadInv(); } catch (e: any) { setMsg(e.message); } };
   const add = async () => {
     try { await api("/users", { method: "POST", body: JSON.stringify(f) }); setMsg(`Added ${f.email}. Share the password securely; they can change it after signing in.`); setF({ email: "", password: "", role: "viewer" }); await load(); }
     catch (e: any) { setMsg(e.message); }
@@ -866,7 +926,15 @@ function Users() {
             ? <><button onClick={() => erase(u.id, u.email)} style={{ background: "#b00020" }}>Confirm erase</button> <button onClick={() => setErasing("")}>Cancel</button></>
             : <button onClick={() => setErasing(u.id)} style={{ background: "#6b7280" }}>Erase</button>}</td></tr>)}</tbody></table>
     <small>Erasing removes the person's e-mail, password and sign-in links permanently; the activity log keeps only an anonymous id.</small>
-    <h4>Add a person</h4>
+    <h4>Invite a person</h4>
+    <input placeholder="Email" aria-label="Invite email" value={invF.email} onChange={e => setInvF({ ...invF, email: e.target.value })} />
+    <select value={invF.role} aria-label="Invite role" onChange={e => setInvF({ ...invF, role: e.target.value })}><option>viewer</option><option>analyst</option><option>admin</option></select>{" "}
+    <button onClick={sendInvite} disabled={!invF.email}>Send invitation</button>
+    {link && <p><input readOnly value={link} aria-label="Invitation link" onFocus={e => e.currentTarget.select()} /></p>}
+    {inv.filter(i => i.status === "pending").length > 0 && <table><thead><tr><th>Pending invitations</th><th>Role</th><th>Expires</th><th></th></tr></thead>
+      <tbody>{inv.filter(i => i.status === "pending").map(i => <tr key={i.id}><td>{i.email}</td><td>{i.role}</td><td>{i.expires_at.slice(0, 10)}</td>
+        <td><button onClick={() => revoke(i.id)} style={{ background: "#6b7280" }}>Revoke</button></td></tr>)}</tbody></table>}
+    <h4>Add a person with a password</h4>
     <input placeholder="Email" value={f.email} onChange={e => setF({ ...f, email: e.target.value })} />
     <input type="password" placeholder="Initial password (10+ characters)" value={f.password} onChange={e => setF({ ...f, password: e.target.value })} />
     <select value={f.role} onChange={e => setF({ ...f, role: e.target.value })}><option>viewer</option><option>analyst</option><option>admin</option></select>{" "}
