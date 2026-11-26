@@ -1060,11 +1060,33 @@ function Settings() {
   </div>{role === "admin" && <QualityRules />}{role === "admin" && <Classification />}{role === "admin" && <ProductAnalytics />}{role === "admin" && <YourData />}</>);
 }
 
+function WorkspaceSwitcher({ onSwitched }: { onSwitched: () => void }) {
+  const [ws, setWs] = useState<any[]>([]);
+  const [name, setName] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [err, setErr] = useState("");
+  const load = useCallback(() => api("/workspaces").then(setWs).catch(() => {}), []);
+  useEffect(() => { load(); }, [load]);
+  const go = async (r: Promise<any>) => { try { const x = await r; setToken(x.token); setAdding(false); setName(""); setErr(""); onSwitched(); await load(); } catch (e: any) { setErr(e.message); } };
+  const cur = ws.find(w => w.current);
+  return (<div style={{ float: "right" }} data-testid="workspace-switcher">
+    <select aria-label="Workspace" value={cur?.id || ""} onChange={e => go(api("/workspaces/switch", { method: "POST", body: JSON.stringify({ tenant_id: e.target.value }) }))}>
+      {ws.map(w => <option key={w.id} value={w.id}>{w.name} ({w.role})</option>)}</select>{" "}
+    {adding
+      ? <><input aria-label="New workspace name" placeholder="Workspace name" value={name} onChange={e => setName(e.target.value)} style={{ display: "inline", width: 160 }} />{" "}
+          <button disabled={!name.trim()} onClick={() => go(api("/workspaces", { method: "POST", body: JSON.stringify({ name }) }))}>Create</button>{" "}
+          <button onClick={() => setAdding(false)} style={{ background: "#6b7280" }}>Cancel</button></>
+      : <button onClick={() => setAdding(true)} style={{ background: "#6b7280" }}>New workspace</button>}
+    {err && <span role="alert" style={{ color: "#b00020", marginLeft: 8 }}>{err}</span>}
+  </div>);
+}
+
 export default function Page() {
   const [authed, setAuthed] = useState(false);
   const [tab, setTab] = useState<Tab>("home");
   const [enrol, setEnrol] = useState(false);            // organisation requires two-step and this person has not set it up
   const [enrolMe, setEnrolMe] = useState<any>(null);
+  const [epoch, setEpoch] = useState(0);                // bumps when the workspace changes: every page reloads its data
   useEffect(() => {
     if (!authed) return;
     api("/auth/me").then(r => setEnrol(!!r.mfa_enrollment_needed)).catch(() => {});
@@ -1084,10 +1106,13 @@ export default function Page() {
     </main>);
   return (
     <main style={{ maxWidth: 900, margin: "0 auto", padding: 24 }}>
+      <WorkspaceSwitcher onSwitched={() => { setTab("home"); setEpoch(e => e + 1); }} />
       <nav style={{ marginBottom: 16 }}>
         {(["home", "dashboards", "sources", "metrics", "ask", "reports", "alerts", "activity", "settings"] as Tab[]).map(t => <button key={t} onClick={() => setTab(t)} disabled={tab === t} style={{ marginRight: 8 }}>{{ home: "Home", dashboards: "Dashboards", sources: "Data Sources", metrics: "Business Metrics", ask: "Ask Your Data", reports: "Reports", alerts: "Alerts", activity: "Activity", settings: "Settings" }[t]}</button>)}
       </nav>
+      <div key={epoch}>
       {tab === "home" ? <Home /> : tab === "dashboards" ? <Dashboards /> : tab === "sources" ? <Sources /> : tab === "metrics" ? <Metrics /> : tab === "reports" ? <Reports /> : tab === "alerts" ? <Alerts /> : tab === "activity" ? <Activity /> : tab === "settings" ? <><Settings /><AccountSecurity /><Users /></> : <Ask />}
+      </div>
     </main>
   );
 }

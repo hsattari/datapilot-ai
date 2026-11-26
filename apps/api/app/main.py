@@ -15,6 +15,7 @@ from .deps import Principal, get_principal, require_admin, require_writer
 from .routers.knowledge import router as knowledge_router
 from .routers.auth import router as auth_router
 from .routers.invitations import router as invitations_router
+from .routers.workspaces import router as workspaces_router
 from .routers.workspace import router as workspace_router
 from .routers.lineage import router as lineage_router
 from .routers.monitoring import router as monitoring_router
@@ -72,6 +73,7 @@ async def security_headers(request, call_next):
 observability.install(app)
 app.include_router(auth_router)
 app.include_router(invitations_router)
+app.include_router(workspaces_router)
 app.include_router(knowledge_router)
 app.include_router(workspace_router)
 app.include_router(lifecycle_router)

@@ -26,7 +26,7 @@ def _aware(dt: datetime | None) -> datetime | None:
 
 
 def _tenant_of(db: Session, user_id: str) -> str | None:
-    return db.scalar(select(m.TenantMembership.tenant_id).where(m.TenantMembership.user_id == user_id))
+    return db.scalar(select(m.TenantMembership.tenant_id).where(m.TenantMembership.user_id == user_id).order_by(m.TenantMembership.id))
 
 
 def _audit_user(db: Session, user_id: str, action: str, **detail) -> None:

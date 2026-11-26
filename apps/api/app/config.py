@@ -84,6 +84,7 @@ class Settings(BaseSettings):
     smtp_starttls: bool = True
     app_base_url: str = ""                 # public web address used in invitation links
     invite_ttl_days: int = 7
+    max_workspaces_per_user: int = 5      # separate workspaces one person may create
     require_consent: bool = False          # registration needs accept_terms=true when on
     terms_version: str = "2026-11"         # bump when the terms or privacy notice change
 

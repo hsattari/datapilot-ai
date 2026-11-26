@@ -56,3 +56,4 @@ The server fetches addresses that customers enter, so `services/netguard.py` app
 - **Image scanning**: Trivy in CI fails the build on fixable CRITICAL/HIGH findings.
 - **Invitations**: random 256-bit token, stored only as a SHA-256 hash, 7-day expiry, single use, replaced when re-invited, revocable, audited (`invitation.created/revoked/accepted`, e-mail address only). Erasing a person deletes their invitations.
 - **Microsoft sign-in**: the browser uses state and nonce; the API verifies the RS256 signature, issuer, audience, expiry and optional directory id, and never creates accounts or re-links by e-mail.
+- **Workspaces**: each workspace is its own tenant, so every existing tenant filter, quota and audit trail applies unchanged. The token's `tid` claim is a preference only: membership is looked up on every request and an unknown workspace falls back to one the person belongs to. Switching and creation are audited.

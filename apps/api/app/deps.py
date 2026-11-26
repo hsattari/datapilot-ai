@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from . import observability
 from .db import get_db
 from .models import Tenant, TenantMembership, User, UserIdentity
-from .security import decode_token
+from .security import decode_claims
 
 bearer = HTTPBearer(auto_error=False)
 
@@ -48,13 +48,19 @@ def get_principal(
     if creds is None:
         raise HTTPException(401, "Not authenticated")
     try:
-        user_id = decode_token(creds.credentials)
+        claims = decode_claims(creds.credentials)
+        user_id = claims["sub"]
     except jwt.PyJWTError:
         raise HTTPException(401, "Invalid or expired token")
     user = db.get(User, user_id)
     if user is None or user.disabled:  # checked on every request, so deactivation takes effect immediately
         raise HTTPException(401, "Invalid or expired token")
-    m = db.scalar(select(TenantMembership).where(TenantMembership.user_id == user_id))
+    # A person may belong to several workspaces; the token names the one they chose. A workspace they no longer
+    # belong to (removed, deleted) silently falls back to another membership: the claim never grants anything.
+    q = select(TenantMembership).where(TenantMembership.user_id == user_id)
+    m = db.scalar(q.where(TenantMembership.tenant_id == claims["tid"])) if claims.get("tid") else None
+    if m is None:
+        m = db.scalar(q.order_by(TenantMembership.id))
     if m is None:
         raise HTTPException(403, "No tenant membership")
     if request.url.path not in MFA_ENROLMENT_PATHS and mfa_enrolment_needed(db, user, m.tenant_id):
